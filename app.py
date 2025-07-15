@@ -1,40 +1,62 @@
 import streamlit as st
-import requests
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from webdriver_manager.chrome import ChromeDriverManager
+import time
 
-st.set_page_config(page_title="Checker", layout="centered")
-st.title("🔍 تحقق من حالة الحساب")
+# إعداد صفحة ستريملت
+st.set_page_config(page_title="تحقق من حالة الحساب", page_icon="🔍", layout="centered")
 
-with st.form("check_form"):
-    url = st.text_input("🔗 أدخل رابط الحساب:", placeholder="https://reddit.com/user/...")
-    platform = st.selectbox("🌐 اختر المنصة:", ["reddit", "twitter"])
-    submitted = st.form_submit_button("تحقق")
+st.markdown("""
+    <h1 style='text-align: center;'>🔍 تحقق من حالة الحساب</h1>
+""", unsafe_allow_html=True)
 
-    if submitted:
+# إدخال الرابط
+account_url = st.text_input("🔗 أدخل رابط الحساب:")
+
+# اختيار المنصة
+platform = st.selectbox("🌐 اختر المنصة (أو اترك التحديد):", ["reddit", "twitter", "instagram", "tiktok", "facebook", "youtube"])
+
+# زر التحقق
+if st.button("تحقق"):
+    if not account_url:
+        st.warning("⚠️ الرجاء إدخال رابط الحساب.")
+    else:
         try:
-            headers = {
-                "User-Agent": "Mozilla/5.0"
-            }
-            response = requests.get(url, headers=headers, timeout=10)
-            content = response.text.lower()
+            # إعداد Selenium على Streamlit Cloud
+            chrome_options = Options()
+            chrome_options.add_argument('--headless')
+            chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            driver = webdriver.Chrome(ChromeDriverManager().install(), options=chrome_options)
 
-            status = "unknown"
-            if platform == "reddit":
-                if "this account has been suspended" in content or "nobody on reddit goes by that name" in content:
-                    status = "suspended"
-                elif "/user/" in url and "posts" in content:
-                    status = "active"
-            elif platform == "twitter":
-                if "account suspended" in content:
-                    status = "suspended"
-                elif "profile-banner" in content or "tweets" in content:
-                    status = "active"
+            driver.get(account_url)
+            time.sleep(3)  # الانتظار لتحميل الصفحة
 
-            if status == "active":
-                st.success("🟢 الحساب نشط (Active)")
-            elif status == "suspended":
+            page_source = driver.page_source.lower()
+
+            suspended_keywords = [
+                "account has been suspended",
+                "page not found",
+                "user not found",
+                "sorry, this page isn't available",
+                "couldn't find this account",
+                "this account doesn’t exist",
+                "this account was suspended",
+                "content not available",
+                "unavailable"
+            ]
+
+            is_suspended = any(keyword in page_source for keyword in suspended_keywords)
+
+            driver.quit()
+
+            if is_suspended:
                 st.error("🔴 الحساب موقوف (Suspended)")
             else:
-                st.warning("⚠️ لم يتم التأكد من الحالة بدقة")
+                st.success("🟢 الحساب نشط (Active)")
 
         except Exception as e:
-            st.warning(f"⚠️ حدث خطأ: {str(e)}")
+            st.warning(f"⚠️ لم يتم التأكد من الحالة بدقة.\n\n{e}")
