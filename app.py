@@ -43,6 +43,18 @@ st.markdown("""
     .not-found { border-left: 5px solid #FF9800; background-color: #fff3e0; }
     .deleted { border-left: 5px solid #607d8b; background-color: #eceff1; }
     .unknown { border-left: 5px solid #9e9e9e; background-color: #f5f5f5; }
+    .stButton>button {
+        background-color: #FF4500;
+        color: white;
+        font-weight: bold;
+        border: none;
+        padding: 0.5rem 1rem;
+        border-radius: 0.5rem;
+    }
+    .stButton>button:hover {
+        background-color: #FF5722;
+        color: white;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -50,11 +62,10 @@ st.markdown("""
 st.markdown("<h1 class='header'>🔍 أداة التحقق من حالة الحسابات</h1>", unsafe_allow_html=True)
 
 # تبويب المنصات
-platform = st.radio(
+platform = st.selectbox(
     "اختر المنصة:",
     ["Reddit", "Facebook", "Twitter"],
-    horizontal=True,
-    label_visibility="collapsed"
+    index=0
 )
 
 # دالة لاستخراج اسم المستخدم من الرابط
@@ -63,44 +74,57 @@ def extract_username(url, platform):
         if not url:
             return None
             
+        # تنظيف المدخلات
+        url = url.strip().strip("/").replace("https://", "").replace("http://", "")
+        
         if platform == "Reddit":
             if "reddit.com" not in url:
-                return url.strip("/").replace("u/", "").replace("@", "")
+                return url.split("/")[0].replace("u/", "").replace("@", "")
             return url.split("/user/")[-1].split("/")[0] if "/user/" in url else url.split("/u/")[-1].split("/")[0]
         
         elif platform == "Facebook":
             if "facebook.com" not in url:
-                return url.strip("/")
+                return url.split("/")[0].split("?")[0]
             return url.split("facebook.com/")[-1].split("/")[0].split("?")[0]
         
         elif platform == "Twitter":
-            if "twitter.com" not in url:
-                return url.strip("/").replace("@", "")
-            return url.split("twitter.com/")[-1].split("/")[0].split("?")[0]
+            if "twitter.com" not in url and "x.com" not in url:
+                return url.split("/")[0].replace("@", "")
+            return url.split("twitter.com/")[-1].split("/")[0].split("?")[0] if "twitter.com" in url else url.split("x.com/")[-1].split("/")[0].split("?")[0]
     
-    except:
-        return url.strip("/").replace("@", "")
+    except Exception as e:
+        st.error(f"حدث خطأ في استخراج اسم المستخدم: {str(e)}")
+        return None
 
 # دالة التحقق من حالة حساب Reddit
 def check_reddit(username):
     url = f"https://www.reddit.com/user/{username}/"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
+    }
     
     try:
-        response = httpx.get(url, headers=headers, timeout=10)
-        html = response.text.lower()
+        with httpx.Client(follow_redirects=True, timeout=15) as client:
+            response = client.get(url, headers=headers)
+            html = response.text.lower()
 
-        if response.status_code == 404 or "page not found" in html:
-            return "❌ الحساب غير موجود", "not-found", url
+            if response.status_code == 404 or "page not found" in html or "sorry, nobody on reddit goes by that name" in html:
+                return "❌ الحساب غير موجود", "not-found", url
 
-        if "suspended" in html or "content unavailable" in html:
-            return "🔴 الحساب موقوف", "suspended", url
+            if ("this account has been suspended" in html or 
+                "content unavailable" in html or 
+                "account suspended" in html or
+                re.search(r"<title>.*suspended.*</title>", html)):
+                return "🔴 الحساب موقوف", "suspended", url
 
-        if response.status_code == 200 and username.lower() in html:
-            return "🟢 الحساب نشط", "active", url
+            if response.status_code == 200 and (f"/user/{username}/" in html or f"u/{username}" in html):
+                return "🟢 الحساب نشط", "active", url
 
-        return "⚠️ لم يتم التأكد من الحالة", "unknown", url
+            return "⚠️ لم يتم التأكد من الحالة", "unknown", url
 
+    except httpx.TimeoutException:
+        return "⚠️ انتهت مهلة الطلب", "unknown", url
     except Exception as e:
         return f"⚠️ خطأ في الاتصال: {str(e)}", "unknown", url
 
@@ -108,25 +132,30 @@ def check_reddit(username):
 def check_facebook(username):
     url = f"https://www.facebook.com/{username}/"
     headers = {
-        "User-Agent": "Mozilla/5.0",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9"
     }
     
     try:
-        response = httpx.get(url, headers=headers, timeout=10)
-        html = response.text.lower()
+        with httpx.Client(follow_redirects=True, timeout=15) as client:
+            response = client.get(url, headers=headers)
+            html = response.text.lower()
 
-        if response.status_code == 404 or "page not found" in html:
-            return "❌ الحساب غير موجود", "not-found", url
+            if response.status_code == 404 or "page not found" in html:
+                return "❌ الحساب غير موجود", "not-found", url
 
-        if "content isn't available" in html or "this page isn't available" in html:
-            return "🔴 الحساب محظور أو غير متاح", "suspended", url
+            if ("content isn't available" in html or 
+                "this page isn't available" in html or
+                "this page may have been deleted" in html):
+                return "🔴 الحساب محظور أو غير متاح", "suspended", url
 
-        if response.status_code == 200 and (f"facebook.com/{username}" in html or f"fb.com/{username}" in html):
-            return "🟢 الحساب نشط", "active", url
+            if response.status_code == 200 and (f"facebook.com/{username}" in html or f"fb.com/{username}" in html):
+                return "🟢 الحساب نشط", "active", url
 
-        return "⚠️ لم يتم التأكد من الحالة", "unknown", url
+            return "⚠️ لم يتم التأكد من الحالة", "unknown", url
 
+    except httpx.TimeoutException:
+        return "⚠️ انتهت مهلة الطلب", "unknown", url
     except Exception as e:
         return f"⚠️ خطأ في الاتصال: {str(e)}", "unknown", url
 
@@ -134,48 +163,48 @@ def check_facebook(username):
 def check_twitter(username):
     url = f"https://twitter.com/{username}/"
     headers = {
-        "User-Agent": "Mozilla/5.0",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9"
     }
     
     try:
-        response = httpx.get(url, headers=headers, timeout=10)
-        html = response.text.lower()
+        with httpx.Client(follow_redirects=True, timeout=15) as client:
+            response = client.get(url, headers=headers)
+            html = response.text.lower()
 
-        if response.status_code == 404 or "page doesn't exist" in html:
-            return "❌ الحساب غير موجود", "not-found", url
+            if response.status_code == 404 or "page doesn't exist" in html:
+                return "❌ الحساب غير موجود", "not-found", url
 
-        if "account suspended" in html or "هذا الحساب معلق" in html:
-            return "🔴 الحساب موقوف", "suspended", url
+            if ("account suspended" in html or 
+                "هذا الحساب معلق" in html or
+                "このアカウントは停止されています" in html):
+                return "🔴 الحساب موقوف", "suspended", url
 
-        if response.status_code == 200 and f"twitter.com/{username}" in html:
-            return "🟢 الحساب نشط", "active", url
+            if response.status_code == 200 and f"twitter.com/{username}" in html:
+                return "🟢 الحساب نشط", "active", url
 
-        return "⚠️ لم يتم التأكد من الحالة", "unknown", url
+            return "⚠️ لم يتم التأكد من الحالة", "unknown", url
 
+    except httpx.TimeoutException:
+        return "⚠️ انتهت مهلة الطلب", "unknown", url
     except Exception as e:
         return f"⚠️ خطأ في الاتصال: {str(e)}", "unknown", url
 
 # واجهة المستخدم
-input_col, button_col = st.columns([4, 1])
-with input_col:
-    user_input = st.text_input(
-        f"أدخل رابط الحساب أو اسم المستخدم على {platform}:",
-        placeholder=f"مثال: username أو https://{'reddit.com' if platform == 'Reddit' else 'facebook.com' if platform == 'Facebook' else 'twitter.com'}/username"
-    )
+user_input = st.text_input(
+    f"أدخل رابط الحساب أو اسم المستخدم على {platform}:",
+    placeholder=f"مثال: username أو https://{'reddit.com' if platform == 'Reddit' else 'facebook.com' if platform == 'Facebook' else 'twitter.com'}/username"
+)
 
-with button_col:
-    st.write("")
-    st.write("")
-    check_button = st.button("تحقق")
+check_button = st.button("تحقق")
 
 # معالجة النتيجة
 if check_button:
     if user_input:
-        username = extract_username(user_input, platform)
-        
-        if username:
-            with st.spinner("جاري التحقق..."):
+        with st.spinner("جاري التحقق من الحساب..."):
+            username = extract_username(user_input, platform)
+            
+            if username:
                 if platform == "Reddit":
                     status, status_class, profile_url = check_reddit(username)
                 elif platform == "Facebook":
@@ -194,8 +223,16 @@ if check_button:
                     """,
                     unsafe_allow_html=True
                 )
-        else:
-            st.warning("⚠️ لم يتم التعرف على اسم المستخدم. يرجى التأكد من الرابط المدخل")
+                
+                # إضافة معلومات إضافية حسب الحالة
+                if status_class == "active":
+                    st.success("تم العثور على الحساب وهو نشط حاليًا.")
+                elif status_class == "suspended":
+                    st.error("هذا الحساب موقوف أو محظور من قبل المنصة.")
+                elif status_class == "not-found":
+                    st.warning("لا يوجد حساب بهذا الاسم. تأكد من كتابة اسم المستخدم بشكل صحيح.")
+            else:
+                st.error("⚠️ لم يتم استخراج اسم مستخدم صحيح. يرجى التأكد من المدخلات.")
     else:
         st.warning("⚠️ يرجى إدخال رابط الحساب أو اسم المستخدم أولاً")
 
