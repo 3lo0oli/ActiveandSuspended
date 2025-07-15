@@ -1,46 +1,45 @@
 import streamlit as st
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
-import time
+import requests
+from bs4 import BeautifulSoup
 
 def check_reddit_account_status(url):
     try:
-        options = Options()
-        options.add_argument("--headless")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--no-sandbox")
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-        driver.get(url)
-        time.sleep(3)
+        headers = {
+            "User-Agent": "Mozilla/5.0"
+        }
+        response = requests.get(url, headers=headers)
 
-        source = driver.page_source.lower()
-        driver.quit()
+        if response.status_code == 404 or "nobody on Reddit goes by that name" in response.text:
+            return "❌ الحساب غير موجود", "orange"
+        
+        soup = BeautifulSoup(response.text, "html.parser")
 
-        if "this account has been suspended" in source:
-            return "🚫 الحساب موقوف (Suspended)", "red"
-        elif "sorry, nobody on reddit goes by that name" in source:
-            return "❓ الحساب غير موجود (Not Found)", "orange"
+        if "this account has been suspended" in soup.text.lower():
+            return "🔴 الحساب موقوف (Suspended)", "red"
+        elif response.status_code == 200:
+            return "🟢 الحساب نشط (Active)", "green"
         else:
-            return "✅ الحساب نشط (Active)", "green"
+            return "⚠️ لم يتم التأكد من الحالة بدقة", "gray"
 
     except Exception as e:
         return f"⚠️ حدث خطأ: {str(e)}", "gray"
 
 
-st.set_page_config(page_title="تحقق من حالة الحساب", page_icon="🔍", layout="centered")
+st.set_page_config(page_title="تحقق من حالة الحساب", page_icon="🔍")
 st.markdown("<h1 style='text-align: center;'>🔍 تحقق من حالة الحساب</h1>", unsafe_allow_html=True)
 
 url = st.text_input("📎 أدخل رابط الحساب:", placeholder="https://www.reddit.com/user/username")
-
-platform = st.selectbox("🌐 اختر المنصة:", ["reddit"], index=0)
+platform = st.selectbox("🌐 اختر المنصة:", ["reddit"])
 
 if st.button("تحقق"):
     if url:
-        with st.spinner("جاري التحقق من الحالة..."):
-            if platform == "reddit":
-                status, color = check_reddit_account_status(url)
-                st.success(f"🟢 {status}") if color == "green" else st.error(f"🔴 {status}") if color == "red" else st.warning(status)
+        with st.spinner("🔎 جاري التحقق..."):
+            status, color = check_reddit_account_status(url)
+            if color == "green":
+                st.success(status)
+            elif color == "red":
+                st.error(status)
+            else:
+                st.warning(status)
     else:
-        st.warning("⚠️ يرجى إدخال رابط الحساب أولًا.")
+        st.warning("⚠️ من فضلك أدخل رابط الحساب أولاً.")
