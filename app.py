@@ -1,62 +1,55 @@
 import streamlit as st
+import time
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
-import time
+from bs4 import BeautifulSoup
 
-# إعداد صفحة ستريملت
 st.set_page_config(page_title="تحقق من حالة الحساب", page_icon="🔍", layout="centered")
 
-st.markdown("""
+st.markdown(
+    """
     <h1 style='text-align: center;'>🔍 تحقق من حالة الحساب</h1>
-""", unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
 
-# إدخال الرابط
-account_url = st.text_input("🔗 أدخل رابط الحساب:")
+account_url = st.text_input("🔗 أدخل رابط الحساب:", placeholder="https://www.reddit.com/user/...")
+platform = st.selectbox("🌐 اختر المنصة (أو اترك التحديد):", options=["reddit"])
 
-# اختيار المنصة
-platform = st.selectbox("🌐 اختر المنصة (أو اترك التحديد):", ["reddit", "twitter", "instagram", "tiktok", "facebook", "youtube"])
-
-# زر التحقق
 if st.button("تحقق"):
-    if not account_url:
-        st.warning("⚠️ الرجاء إدخال رابط الحساب.")
+    if not account_url.strip():
+        st.warning("يرجى إدخال رابط الحساب.")
     else:
         try:
-            # إعداد Selenium على Streamlit Cloud
-            chrome_options = Options()
-            chrome_options.add_argument('--headless')
-            chrome_options.add_argument('--disable-gpu')
-            chrome_options.add_argument('--no-sandbox')
-            chrome_options.add_argument('--disable-dev-shm-usage')
-            driver = webdriver.Chrome(ChromeDriverManager().install(), options=chrome_options)
+            with st.spinner("جارٍ التحقق..."):
+                # إعداد المتصفح بدون واجهة (headless)
+                chrome_options = Options()
+                chrome_options.add_argument('--headless')
+                chrome_options.add_argument('--no-sandbox')
+                chrome_options.add_argument('--disable-dev-shm-usage')
 
-            driver.get(account_url)
-            time.sleep(3)  # الانتظار لتحميل الصفحة
+                service = Service(ChromeDriverManager().install())
+                driver = webdriver.Chrome(service=service, options=chrome_options)
 
-            page_source = driver.page_source.lower()
+                driver.get(account_url)
+                time.sleep(3)
 
-            suspended_keywords = [
-                "account has been suspended",
-                "page not found",
-                "user not found",
-                "sorry, this page isn't available",
-                "couldn't find this account",
-                "this account doesn’t exist",
-                "this account was suspended",
-                "content not available",
-                "unavailable"
-            ]
+                page_source = driver.page_source
+                soup = BeautifulSoup(page_source, 'html.parser')
+                driver.quit()
 
-            is_suspended = any(keyword in page_source for keyword in suspended_keywords)
-
-            driver.quit()
-
-            if is_suspended:
-                st.error("🔴 الحساب موقوف (Suspended)")
-            else:
-                st.success("🟢 الحساب نشط (Active)")
+                # التحقق من حالة الحساب على Reddit
+                if platform == "reddit":
+                    if "This account has been suspended" in soup.text:
+                        st.error("🔴 الحساب موقوف (Suspended)")
+                    elif "Sorry, nobody on Reddit goes by that name." in soup.text:
+                        st.error("⚠️ الحساب غير موجود")
+                    elif "u/" in soup.text:
+                        st.success("🟢 الحساب نشط (Active)")
+                    else:
+                        st.warning("⚠️ لم يتم التأكد من الحالة بدقة.")
 
         except Exception as e:
-            st.warning(f"⚠️ لم يتم التأكد من الحالة بدقة.\n\n{e}")
+            st.warning(f"حدث خطأ أثناء التحقق: {e}")
