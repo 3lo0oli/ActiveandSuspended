@@ -3,16 +3,6 @@ import requests
 
 st.set_page_config(page_title="Active / Suspended Checker", layout="centered")
 
-st.markdown("""
-    <style>
-    body {
-        font-family: Arial;
-        background: #f9f9f9;
-        text-align: center;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
 st.title("🔍 تحقق من حالة الحساب")
 
 with st.form("check_form"):
@@ -24,33 +14,24 @@ with st.form("check_form"):
 
     if submitted:
         try:
-            clean_url = url.split("?")[0]  # إزالة تتبع الروابط
+            clean_url = url.split("?")[0]
             response = requests.get(clean_url, timeout=10)
             content = response.text.lower()
 
             if platform == "twitter":
                 is_suspended = "account suspended" in content
-
             elif platform == "reddit":
                 is_suspended = "this account has been suspended" in content
-
             elif platform == "facebook":
-                is_suspended = ("this content isn't available" in content or
-                                "page isn't available" in content)
-
+                is_suspended = "this content isn't available" in content or "page isn't available" in content
             elif platform == "instagram":
                 is_suspended = "sorry, this page isn't available" in content
-
             elif platform == "youtube":
-                is_suspended = ("this account has been terminated" in content or
-                                "channel does not exist" in content)
-
+                is_suspended = "this account has been terminated" in content or "channel does not exist" in content
             elif platform == "tiktok":
-                is_suspended = ("couldn't find this account" in content or
-                                "page not available" in content)
-
+                is_suspended = "couldn't find this account" in content or "page not available" in content
             else:
-                is_suspended = True  # منصة غير مدعومة = نعتبره موقوف
+                is_suspended = True
 
             if is_suspended:
                 st.error("🔴 الحساب موقوف (Suspended)")
