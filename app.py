@@ -6,9 +6,9 @@ from bs4 import BeautifulSoup
 
 # إعدادات الصفحة
 st.set_page_config(
-    page_title="أداة التحقق الفعلي من الحسابات",
-    page_icon="🌐",
-    layout="wide"
+    page_title="أداة التحقق من حسابات Reddit بدقة",
+    page_icon="🔍",
+    layout="centered"
 )
 
 # CSS مخصص
@@ -16,7 +16,7 @@ st.markdown("""
 <style>
     .header {
         text-align: center;
-        color: #2b5876;
+        color: #FF4500;
         margin-bottom: 30px;
     }
     .result-box {
@@ -28,7 +28,6 @@ st.markdown("""
     .active { border-left: 5px solid #4CAF50; background-color: #e8f5e9; }
     .suspended { border-left: 5px solid #f44336; background-color: #ffebee; }
     .not-found { border-left: 5px solid #FF9800; background-color: #fff3e0; }
-    .deleted { border-left: 5px solid #607d8b; background-color: #eceff1; }
     .unknown { border-left: 5px solid #9e9e9e; background-color: #f5f5f5; }
     .stButton>button {
         background-color: #FF4500;
@@ -39,206 +38,143 @@ st.markdown("""
         border-radius: 0.5rem;
         width: 100%;
     }
-    .tab-content {
-        padding: 20px;
-        background: #f9f9f9;
+    .user-info {
+        background: #f0f2f5;
+        padding: 15px;
         border-radius: 8px;
-        margin-top: 10px;
-    }
-    .screenshot {
-        max-width: 100%;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        margin-top: 10px;
+        margin-top: 15px;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # عنوان التطبيق
-st.markdown("<h1 class='header'>🌐 أداة التحقق الفعلي من حالة الحسابات</h1>", unsafe_allow_html=True)
-
-# تبويب المنصات
-platform = st.selectbox(
-    "اختر المنصة:",
-    ["Reddit", "Facebook", "Twitter", "Instagram", "LinkedIn"],
-    index=0
-)
+st.markdown("<h1 class='header'>🔍 أداة التحقق من حسابات Reddit بدقة</h1>", unsafe_allow_html=True)
 
 # دالة لاستخراج اسم المستخدم من الرابط
-def extract_username(url, platform):
+def extract_reddit_username(input_url):
     try:
-        if not url:
+        if not input_url:
             return None
             
         # تنظيف المدخلات
-        url = url.strip().strip("/").replace("https://", "").replace("http://", "")
+        input_url = input_url.strip().strip("/").replace("https://", "").replace("http://", "")
         
-        if platform == "Reddit":
-            if "reddit.com" not in url:
-                return url.split("/")[0].replace("u/", "").replace("@", "")
-            return url.split("/user/")[-1].split("/")[0] if "/user/" in url else url.split("/u/")[-1].split("/")[0]
+        if "reddit.com" not in input_url:
+            return input_url.split("/")[0].replace("u/", "").replace("@", "")
         
-        elif platform == "Facebook":
-            if "facebook.com" not in url:
-                return url.split("/")[0].split("?")[0]
-            return url.split("facebook.com/")[-1].split("/")[0].split("?")[0]
+        if "/user/" in input_url:
+            return input_url.split("/user/")[-1].split("/")[0]
+        elif "/u/" in input_url:
+            return input_url.split("/u/")[-1].split("/")[0]
         
-        elif platform == "Twitter":
-            if "twitter.com" not in url and "x.com" not in url:
-                return url.split("/")[0].replace("@", "")
-            return url.split("twitter.com/")[-1].split("/")[0].split("?")[0] if "twitter.com" in url else url.split("x.com/")[-1].split("/")[0].split("?")[0]
-        
-        elif platform == "Instagram":
-            if "instagram.com" not in url:
-                return url.split("/")[0].replace("@", "")
-            return url.split("instagram.com/")[-1].split("/")[0].split("?")[0]
-        
-        elif platform == "LinkedIn":
-            if "linkedin.com" not in url:
-                return url.split("/")[0].replace("@", "")
-            return url.split("linkedin.com/in/")[-1].split("/")[0].split("?")[0]
+        return input_url.split("reddit.com/")[-1].split("/")[0]
     
     except Exception as e:
         st.error(f"حدث خطأ في استخراج اسم المستخدم: {str(e)}")
         return None
 
-# دالة لفحص المحتوى الفعلي للصفحة
-def check_page_content(url, platform):
+# دالة التحقق من حالة الحساب مع فحص محتوى الصفحة
+def check_reddit_account(username):
+    if not username:
+        return "❌ لم يتم تقديم اسم مستخدم صحيح", "unknown", None
+    
+    url = f"https://www.reddit.com/user/{username}/"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9"
     }
     
     try:
-        with httpx.Client(follow_redirects=True, timeout=20) as client:
+        with httpx.Client(follow_redirects=True, timeout=15) as client:
             response = client.get(url, headers=headers)
-            html = response.text.lower()
+            
+            # تحليل محتوى الصفحة باستخدام BeautifulSoup
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # إزالة النصوص المخفية وغير الضرورية
-            for script in soup(["script", "style", "noscript", "meta", "link"]):
-                script.decompose()
+            # البحث عن علامات الحساب الموقوف
+            suspended_keywords = [
+                "this account has been suspended",
+                "account suspended",
+                "suspended account",
+                "content unavailable"
+            ]
             
-            visible_text = soup.get_text().lower()
+            # البحث عن علامات الحساب غير موجود
+            not_found_keywords = [
+                "page not found",
+                "sorry, nobody on reddit goes by that name",
+                "there's nobody on reddit by that name"
+            ]
             
-            if platform == "Reddit":
-                if response.status_code == 404 or "page not found" in visible_text:
-                    return "❌ الحساب غير موجود", "not-found"
-                
-                if ("suspended" in visible_text or 
-                    "content unavailable" in visible_text or
-                    "this account has been suspended" in visible_text):
-                    return "🔴 الحساب موقوف", "suspended"
-                
-                if response.status_code == 200 and ("karma" in html or "cake day" in html):
-                    return "🟢 الحساب نشط", "active"
+            # النص الكامل للصفحة
+            page_text = soup.get_text().lower()
             
-            elif platform == "Facebook":
-                if response.status_code == 404 or "page not found" in visible_text:
-                    return "❌ الحساب غير موجود", "not-found"
-                
-                if ("content isn't available" in visible_text or 
-                    "this page isn't available" in visible_text or
-                    "تم حظر هذه الصفحة" in visible_text):
-                    return "🔴 الحساب محظور", "suspended"
-                
-                if response.status_code == 200 and ("timeline" in html or "posts" in html):
-                    return "🟢 الحساب نشط", "active"
+            # التحقق من الحساب الموقوف
+            if any(keyword in page_text for keyword in suspended_keywords):
+                return "🔴 الحساب موقوف (Suspended)", "suspended", url
             
-            elif platform == "Twitter":
-                if response.status_code == 404 or "page doesn't exist" in visible_text:
-                    return "❌ الحساب غير موجود", "not-found"
-                
-                if ("account suspended" in visible_text or 
-                    "هذا الحساب معلق" in visible_text or
-                    "このアカウントは停止されています" in visible_text):
-                    return "🔴 الحساب موقوف", "suspended"
-                
-                if response.status_code == 200 and ("tweets" in html or "following" in html):
-                    return "🟢 الحساب نشط", "active"
+            # التحقق من الحساب غير موجود
+            if response.status_code == 404 or any(keyword in page_text for keyword in not_found_keywords):
+                return "❌ الحساب غير موجود (404)", "not-found", url
             
-            elif platform == "Instagram":
-                if response.status_code == 404 or "page not found" in visible_text:
-                    return "❌ الحساب غير موجود", "not-found"
+            # التحقق من الحساب النشط
+            if response.status_code == 200:
+                # البحث عن عناصر خاصة بحساب نشط
+                user_profile = soup.find("div", {"class": "profile-header"})
+                user_posts = soup.find("div", {"id": "profile-posts"})
                 
-                if ("sorry, this page isn't available" in visible_text or 
-                    "عذرًا، هذه الصفحة غير متوفرة" in visible_text):
-                    return "🔴 الحساب محظور", "suspended"
-                
-                if response.status_code == 200 and ("posts" in html or "followers" in html):
-                    return "🟢 الحساب نشط", "active"
+                if user_profile or user_posts:
+                    return "🟢 الحساب نشط (Active)", "active", url
             
-            elif platform == "LinkedIn":
-                if response.status_code == 404 or "page not found" in visible_text:
-                    return "❌ الحساب غير موجود", "not-found"
-                
-                if ("this profile is unavailable" in visible_text or 
-                    "هذا الملف غير متاح" in visible_text):
-                    return "🔴 الحساب محظور", "suspended"
-                
-                if response.status_code == 200 and ("experience" in html or "education" in html):
-                    return "🟢 الحساب نشط", "active"
-            
-            return "⚠️ لم يتم التأكد من الحالة", "unknown"
+            # إذا لم يتم التعرف على الحالة
+            return "⚠️ لم يتم التأكد من الحالة بدقة", "unknown", url
     
     except httpx.TimeoutException:
-        return "⚠️ انتهت مهلة الطلب", "unknown"
+        return "⚠️ انتهت مهلة الطلب", "unknown", url
     except Exception as e:
-        return f"⚠️ خطأ في الاتصال: {str(e)}", "unknown"
+        return f"⚠️ حدث خطأ: {str(e)}", "unknown", url
 
 # واجهة المستخدم
-user_input = st.text_input(
-    f"أدخل رابط الحساب أو اسم المستخدم على {platform}:",
-    placeholder=f"مثال: username أو https://{'reddit.com' if platform == 'Reddit' else 'facebook.com' if platform == 'Facebook' else 'twitter.com' if platform == 'Twitter' else 'instagram.com' if platform == 'Instagram' else 'linkedin.com'}/username"
+input_url = st.text_input(
+    "أدخل رابط حساب Reddit أو اسم المستخدم:",
+    placeholder="مثال: hedaa_7 أو https://www.reddit.com/user/hedaa_7/",
+    key="user_input"
 )
 
 check_button = st.button("تحقق الآن")
 
 # معالجة النتيجة
 if check_button:
-    if user_input:
-        with st.spinner("جاري فتح الرابط والتحقق من المحتوى الفعلي..."):
-            username = extract_username(user_input, platform)
+    if input_url:
+        with st.spinner("جاري فحص الحساب بدقة..."):
+            username = extract_reddit_username(input_url)
             
             if username:
-                if platform == "Reddit":
-                    url = f"https://www.reddit.com/user/{username}/"
-                elif platform == "Facebook":
-                    url = f"https://www.facebook.com/{username}/"
-                elif platform == "Twitter":
-                    url = f"https://twitter.com/{username}/"
-                elif platform == "Instagram":
-                    url = f"https://instagram.com/{username}/"
-                elif platform == "LinkedIn":
-                    url = f"https://linkedin.com/in/{username}/"
-                
-                status, status_class = check_page_content(url, platform)
+                status, status_class, profile_url = check_reddit_account(username)
                 
                 # عرض النتيجة
                 st.markdown(
                     f"""
                     <div class="result-box {status_class}">
                         <h3>{status}</h3>
-                        <p><strong>اسم المستخدم:</strong> {username}</p>
-                        <p><strong>رابط الحساب:</strong> <a href="{url}" target="_blank">{url}</a></p>
+                        <div class="user-info">
+                            <p><strong>اسم المستخدم:</strong> {username}</p>
+                            <p><strong>رابط الحساب:</strong> <a href="{profile_url}" target="_blank">{profile_url}</a></p>
+                        </div>
                     </div>
                     """,
                     unsafe_allow_html=True
                 )
                 
-                # عرض معلومات إضافية
-                with st.expander("تفاصيل إضافية", expanded=False):
-                    st.write(f"**كود الحالة:** {status.split(' ')[0]}")
-                    st.write(f"**الرابط الذي تم فحصه:** [{url}]({url})")
-                    
-                    if status_class == "active":
-                        st.success("تم العثور على الحساب وهو نشط. يمكنك زيارة الرابط أعلاه لمشاهدة المحتوى.")
-                    elif status_class == "suspended":
-                        st.error("الحساب موقوف أو محظور. هذا يعني أن المنصة قد قامت بتعطيل الحساب.")
-                    elif status_class == "not-found":
-                        st.warning("الحساب غير موجود أو تم حذفه. تأكد من صحة اسم المستخدم.")
-                    else:
-                        st.info("لم نتمكن من تحديد حالة الحساب بدقة. يمكنك زيارة الرابط للتحقق يدويًا.")
+                # إضافة تفسير للحالة
+                if status_class == "active":
+                    st.success("تم العثور على الحساب وهو نشط. يمكنك زيارة الرابط أعلاه لمشاهدة المحتوى.")
+                elif status_class == "suspended":
+                    st.error("هذا الحساب موقوف من قبل إدارة Reddit. لا يمكن عرض المحتوى.")
+                elif status_class == "not-found":
+                    st.warning("لا يوجد حساب بهذا الاسم. تأكد من كتابة اسم المستخدم بشكل صحيح.")
+                else:
+                    st.info("لم نتمكن من تحديد حالة الحساب بدقة. يمكنك زيارة الرابط للتحقق يدويًا.")
             else:
                 st.error("⚠️ لم نتمكن من استخراج اسم مستخدم صحيح من الرابط المدخل")
     else:
@@ -248,6 +184,6 @@ if check_button:
 st.markdown("---")
 st.markdown("""
 <p style="text-align: center; color: #666; font-size: 0.9rem;">
-    أداة متقدمة للتحقق من حالة الحسابات | تعمل بفحص المحتوى الفعلي للصفحات
+    أداة متقدمة للتحقق من حسابات Reddit | تعمل بفحص المحتوى الفعلي للصفحات
 </p>
 """, unsafe_allow_html=True)
