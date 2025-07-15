@@ -3,11 +3,12 @@ import httpx
 import re
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
+import json
 
 # إعدادات الصفحة
 st.set_page_config(
-    page_title="أداة التحقق من حسابات Reddit بدقة",
-    page_icon="🔍",
+    page_title="أداة التحقق التلقائي من Reddit",
+    page_icon="🤖",
     layout="centered"
 )
 
@@ -38,152 +39,203 @@ st.markdown("""
         border-radius: 0.5rem;
         width: 100%;
     }
-    .user-info {
-        background: #f0f2f5;
-        padding: 15px;
-        border-radius: 8px;
-        margin-top: 15px;
+    .debug-info {
+        font-family: monospace;
+        font-size: 0.8rem;
+        background: #f5f5f5;
+        padding: 10px;
+        border-radius: 4px;
+        margin-top: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # عنوان التطبيق
-st.markdown("<h1 class='header'>🔍 أداة التحقق من حسابات Reddit بدقة</h1>", unsafe_allow_html=True)
+st.markdown("<h1 class='header'>🤖 أداة التحقق التلقائي من Reddit</h1>", unsafe_allow_html=True)
 
-# دالة لاستخراج اسم المستخدم من الرابط
-def extract_reddit_username(input_url):
+# دالة متقدمة لاستخراج اسم المستخدم
+def extract_username(input_url):
     try:
         if not input_url:
             return None
             
-        # تنظيف المدخلات
-        input_url = input_url.strip().strip("/").replace("https://", "").replace("http://", "")
+        input_url = input_url.strip().strip("/")
         
-        if "reddit.com" not in input_url:
-            return input_url.split("/")[0].replace("u/", "").replace("@", "")
+        # إذا كان اسم مستخدم مباشر بدون رابط
+        if not any(x in input_url for x in ['http://', 'https://', 'reddit.com']):
+            return re.sub(r'[^a-zA-Z0-9_-]', '', input_url.split('?')[0].split('/')[0])
         
-        if "/user/" in input_url:
-            return input_url.split("/user/")[-1].split("/")[0]
-        elif "/u/" in input_url:
-            return input_url.split("/u/")[-1].split("/")[0]
+        # معالجة الروابط
+        parsed = urlparse(input_url)
+        if not parsed.scheme:
+            parsed = urlparse(f"https://{input_url}")
         
-        return input_url.split("reddit.com/")[-1].split("/")[0]
+        path_parts = [p for p in parsed.path.split('/') if p]
+        
+        if 'user' in path_parts:
+            return path_parts[path_parts.index('user') + 1]
+        elif 'u' in path_parts:
+            return path_parts[path_parts.index('u') + 1]
+        
+        return path_parts[0] if path_parts else None
     
     except Exception as e:
-        st.error(f"حدث خطأ في استخراج اسم المستخدم: {str(e)}")
+        st.error(f"خطأ في استخراج اسم المستخدم: {str(e)}")
         return None
 
-# دالة التحقق من حالة الحساب مع فحص محتوى الصفحة
-def check_reddit_account(username):
+# دالة التحقق المتقدمة باستخدام تقنيات متعددة
+def advanced_reddit_check(username):
     if not username:
-        return "❌ لم يتم تقديم اسم مستخدم صحيح", "unknown", None
+        return "❌ اسم مستخدم غير صحيح", "unknown", None, {}
     
     url = f"https://www.reddit.com/user/{username}/"
+    api_url = f"https://www.reddit.com/user/{username}/about.json"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9"
     }
     
+    debug_info = {"username": username, "checks": []}
+    
     try:
         with httpx.Client(follow_redirects=True, timeout=15) as client:
-            response = client.get(url, headers=headers)
+            # التحقق من واجهة برمجة التطبيقات (API) أولاً
+            api_response = client.get(api_url, headers=headers)
+            debug_info["api_status"] = api_response.status_code
             
-            # تحليل محتوى الصفحة باستخدام BeautifulSoup
+            if api_response.status_code == 200:
+                try:
+                    data = api_response.json()
+                    if 'error' in data and data['error'] == 404:
+                        debug_info["checks"].append("API: Account not found")
+                        return "❌ الحساب غير موجود", "not-found", url, debug_info
+                    if 'data' in data and 'is_suspended' in data['data']:
+                        if data['data']['is_suspended']:
+                            debug_info["checks"].append("API: Account suspended")
+                            return "🔴 الحساب موقوف", "suspended", url, debug_info
+                        else:
+                            debug_info["checks"].append("API: Account active")
+                            return "🟢 الحساب نشط", "active", url, debug_info
+                except json.JSONDecodeError:
+                    pass
+            
+            # إذا فشل API نلجأ لفحص الصفحة مباشرة
+            response = client.get(url, headers=headers)
+            debug_info["page_status"] = response.status_code
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # البحث عن علامات الحساب الموقوف
+            # تحليل محتوى الصفحة بدقة
+            page_text = soup.get_text().lower()
+            debug_info["page_text_snippet"] = page_text[:200] + "..." if page_text else ""
+            
+            # قوائم الكلمات المفتاحية لكل حالة
             suspended_keywords = [
                 "this account has been suspended",
                 "account suspended",
                 "suspended account",
-                "content unavailable"
+                "content unavailable",
+                "user suspended",
+                "هذا الحساب موقوف"
             ]
             
-            # البحث عن علامات الحساب غير موجود
             not_found_keywords = [
                 "page not found",
                 "sorry, nobody on reddit goes by that name",
-                "there's nobody on reddit by that name"
+                "there's nobody on reddit by that name",
+                "user not found",
+                "لا يوجد مستخدم بهذا الاسم"
             ]
             
-            # النص الكامل للصفحة
-            page_text = soup.get_text().lower()
+            active_indicators = [
+                f"u/{username}",
+                f"user/{username}",
+                "post karma",
+                "comment karma",
+                "cake day",
+                "منشورات",
+                "تعليقات"
+            ]
             
             # التحقق من الحساب الموقوف
-            if any(keyword in page_text for keyword in suspended_keywords):
-                return "🔴 الحساب موقوف (Suspended)", "suspended", url
+            if any(kw in page_text for kw in suspended_keywords):
+                debug_info["checks"].append("Page: Suspended keywords found")
+                return "🔴 الحساب موقوف", "suspended", url, debug_info
             
             # التحقق من الحساب غير موجود
-            if response.status_code == 404 or any(keyword in page_text for keyword in not_found_keywords):
-                return "❌ الحساب غير موجود (404)", "not-found", url
+            if response.status_code == 404 or any(kw in page_text for kw in not_found_keywords):
+                debug_info["checks"].append("Page: Not found indicators")
+                return "❌ الحساب غير موجود", "not-found", url, debug_info
             
             # التحقق من الحساب النشط
             if response.status_code == 200:
-                # البحث عن عناصر خاصة بحساب نشط
-                user_profile = soup.find("div", {"class": "profile-header"})
-                user_posts = soup.find("div", {"id": "profile-posts"})
+                # البحث عن عناصر وصفية محددة
+                profile_header = soup.find("div", {"class": "profile-header"})
+                profile_tabs = soup.find("div", {"class": "profile-tabs"})
                 
-                if user_profile or user_posts:
-                    return "🟢 الحساب نشط (Active)", "active", url
+                if any(ind in page_text for ind in active_indicators) or (profile_header and profile_tabs):
+                    debug_info["checks"].append("Page: Active indicators found")
+                    return "🟢 الحساب نشط", "active", url, debug_info
             
             # إذا لم يتم التعرف على الحالة
-            return "⚠️ لم يتم التأكد من الحالة بدقة", "unknown", url
+            debug_info["checks"].append("Page: No clear indicators")
+            return "⚠️ لم يتم التأكد من الحالة", "unknown", url, debug_info
     
     except httpx.TimeoutException:
-        return "⚠️ انتهت مهلة الطلب", "unknown", url
+        debug_info["error"] = "Request timeout"
+        return "⚠️ انتهت مهلة الطلب", "unknown", url, debug_info
     except Exception as e:
-        return f"⚠️ حدث خطأ: {str(e)}", "unknown", url
+        debug_info["error"] = str(e)
+        return f"⚠️ حدث خطأ: {str(e)}", "unknown", url, debug_info
 
 # واجهة المستخدم
 input_url = st.text_input(
     "أدخل رابط حساب Reddit أو اسم المستخدم:",
-    placeholder="مثال: hedaa_7 أو https://www.reddit.com/user/hedaa_7/",
+    placeholder="مثال: nedaa_7 أو https://www.reddit.com/user/nedaa_7/",
     key="user_input"
 )
 
-check_button = st.button("تحقق الآن")
+check_button = st.button("تحقق تلقائيًا")
 
 # معالجة النتيجة
 if check_button:
     if input_url:
-        with st.spinner("جاري فحص الحساب بدقة..."):
-            username = extract_reddit_username(input_url)
+        with st.spinner("جاري التحقق التلقائي بدقة عالية..."):
+            username = extract_username(input_url)
             
             if username:
-                status, status_class, profile_url = check_reddit_account(username)
+                status, status_class, profile_url, debug_info = advanced_reddit_check(username)
                 
                 # عرض النتيجة
                 st.markdown(
                     f"""
                     <div class="result-box {status_class}">
                         <h3>{status}</h3>
-                        <div class="user-info">
-                            <p><strong>اسم المستخدم:</strong> {username}</p>
-                            <p><strong>رابط الحساب:</strong> <a href="{profile_url}" target="_blank">{profile_url}</a></p>
-                        </div>
+                        <p><strong>اسم المستخدم:</strong> {username}</p>
+                        <p><strong>الرابط:</strong> {profile_url}</p>
                     </div>
                     """,
                     unsafe_allow_html=True
                 )
                 
-                # إضافة تفسير للحالة
-                if status_class == "active":
-                    st.success("تم العثور على الحساب وهو نشط. يمكنك زيارة الرابط أعلاه لمشاهدة المحتوى.")
-                elif status_class == "suspended":
-                    st.error("هذا الحساب موقوف من قبل إدارة Reddit. لا يمكن عرض المحتوى.")
-                elif status_class == "not-found":
-                    st.warning("لا يوجد حساب بهذا الاسم. تأكد من كتابة اسم المستخدم بشكل صحيح.")
-                else:
-                    st.info("لم نتمكن من تحديد حالة الحساب بدقة. يمكنك زيارة الرابط للتحقق يدويًا.")
+                # إظهار تفاصيل إضافية
+                with st.expander("تفاصيل التحقق", expanded=False):
+                    st.write("**طريقة التحقق:**")
+                    if "API" in str(debug_info.get("checks", [])):
+                        st.success("تم استخدام واجهة برمجة التطبيقات (API) للتحقق")
+                    else:
+                        st.info("تم فحص الصفحة مباشرة")
+                    
+                    st.write("**معلومات تقنية:**")
+                    st.json(debug_info)
             else:
-                st.error("⚠️ لم نتمكن من استخراج اسم مستخدم صحيح من الرابط المدخل")
+                st.error("⚠️ لم يتم التعرف على اسم مستخدم صحيح")
     else:
-        st.warning("⚠️ يرجى إدخال رابط الحساب أو اسم المستخدم أولاً")
+        st.warning("⚠️ يرجى إدخال رابط أو اسم مستخدم أولاً")
 
 # تذييل الصفحة
 st.markdown("---")
 st.markdown("""
 <p style="text-align: center; color: #666; font-size: 0.9rem;">
-    أداة متقدمة للتحقق من حسابات Reddit | تعمل بفحص المحتوى الفعلي للصفحات
+    أداة التحقق التلقائي المتقدمة | لا تحتاج لأي تدخل يدوي
 </p>
 """, unsafe_allow_html=True)
