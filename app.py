@@ -4,14 +4,20 @@ import re
 
 def check_reddit_status(url):
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
+        headers = {
+            "User-Agent": "Mozilla/5.0"
+        }
         response = httpx.get(url, headers=headers, timeout=10)
+        html = response.text.lower()
 
-        if response.status_code == 404:
-            return "❌ الحساب غير موجود", "orange"
+        if response.status_code == 404 or "page not found" in html:
+            return "❌ الحساب غير موجود (404)", "orange"
 
-        # نتحقق إذا الصفحة فيها رسالة suspension
-        if re.search(r"(?i)this account has been suspended", response.text):
+        # التحقق من الحساب الموقوف
+        if "this account has been suspended" in html or \
+           "content unavailable" in html or \
+           "sorry, nobody on reddit goes by that name" in html or \
+           re.search(r"<title>\s*user.*suspended\s*</title>", html):
             return "🔴 الحساب موقوف (Suspended)", "red"
 
         if response.status_code == 200:
