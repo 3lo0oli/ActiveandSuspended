@@ -1,104 +1,175 @@
 import streamlit as st
 import httpx
 import re
+from urllib.parse import urlparse
 
-def check_reddit_status(username_or_url):
+def extract_reddit_username(url_or_username):
+    """استخراج اسم مستخدم Reddit من الرابط أو النص المدخل"""
+    if not url_or_username:
+        return None
+    
+    # إذا كان إدخال اسم مستخدم مباشر (بدون رابط)
+    if not url_or_username.startswith(('http://', 'https://')):
+        return url_or_username.split('/')[0].strip('@')
+    
     try:
-        # استخراج اسم المستخدم من الرابط إذا تم إدخال رابط
-        if "reddit.com" in username_or_url:
-            username = username_or_url.split("/user/")[-1].strip("/")
-        else:
-            username = username_or_url.strip("/")
-        
+        parsed = urlparse(url_or_username)
+        if 'reddit.com' in parsed.netloc:
+            path_parts = parsed.path.split('/')
+            if len(path_parts) >= 3 and path_parts[1] == 'user':
+                return path_parts[2]
+            elif len(path_parts) >= 2:
+                return path_parts[1]
+    except:
+        pass
+    
+    return url_or_username.strip('/')
+
+def check_reddit_status(username):
+    try:
         if not username:
-            return "❌ لم يتم تقديم اسم مستخدم صحيح", "gray"
+            return "❌ لم يتم تقديم اسم مستخدم صحيح", "gray", None
         
         url = f"https://www.reddit.com/user/{username}/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9"
         }
         
-        response = httpx.get(url, headers=headers, timeout=10, follow_redirects=True)
-        html = response.text.lower()
+        with httpx.Client(follow_redirects=True) as client:
+            response = client.get(url, headers=headers, timeout=15)
+            html = response.text.lower()
 
-        # التحقق من الحساب غير موجود
-        if response.status_code == 404 or "page not found" in html or "sorry, nobody on reddit goes by that name" in html:
-            return "❌ الحساب غير موجود (404)", "orange"
+            # الحساب غير موجود
+            if (response.status_code == 404 or 
+                "page not found" in html or 
+                "sorry, nobody on reddit goes by that name" in html or
+                "there's nobody on reddit by that name" in html):
+                return "❌ الحساب غير موجود (404)", "orange", url
 
-        # التحقق من الحساب الموقوف
-        if ("this account has been suspended" in html or 
-            "content unavailable" in html or 
-            re.search(r"<title>\s*user.*suspended\s*</title>", html) or
-            "account suspended" in html):
-            return "🔴 الحساب موقوف (Suspended)", "red"
+            # الحساب موقوف
+            if ("this account has been suspended" in html or 
+                "content unavailable" in html or 
+                re.search(r"<title>\s*user.*suspended\s*</title>", html, re.IGNORECASE) or
+                "account suspended" in html or
+                "suspended account" in html):
+                return "🔴 الحساب موقوف (Suspended)", "red", url
 
-        # التحقق من الحساب المحذوف
-        if ("this account has been deleted" in html or 
-            "user deleted" in html):
-            return "⚫ الحساب محذوف (Deleted)", "black"
+            # الحساب محذوف
+            if ("this account has been deleted" in html or 
+                "user deleted" in html or
+                "deleted account" in html):
+                return "⚫ الحساب محذوف (Deleted)", "black", url
 
-        # التحقق من الحساب النشط
-        if response.status_code == 200 and ("user" in html or "u/" in html):
-            return "🟢 الحساب نشط (Active)", "green"
+            # الحساب النشط
+            if (response.status_code == 200 and 
+                (f"/user/{username}/" in html.lower() or 
+                 f"u/{username}" in html.lower() or
+                 f"author={username}" in html.lower())):
+                return "🟢 الحساب نشط (Active)", "green", url
 
-        return "⚠️ لم يتم التأكد من الحالة بدقة", "gray"
+            # إذا لم يتطابق مع أي حالة معروفة
+            return "⚠️ لم يتم التأكد من الحالة بدقة", "gray", url
 
     except httpx.TimeoutException:
-        return "⚠️ انتهت مهلة الطلب (Timeout)", "gray"
-    except httpx.RequestError as e:
-        return f"⚠️ خطأ في الاتصال: {str(e)}", "gray"
+        return "⚠️ انتهت مهلة الطلب (Timeout)", "gray", url
+    except httpx.HTTPError as e:
+        return f"⚠️ خطأ في الاتصال: {str(e)}", "gray", url
     except Exception as e:
-        return f"⚠️ حدث خطأ غير متوقع: {str(e)}", "gray"
+        return f"⚠️ حدث خطأ غير متوقع: {str(e)}", "gray", url
 
 # واجهة Streamlit
-st.set_page_config(page_title="تحقق من حالة الحساب", page_icon="🔍", layout="wide")
-st.markdown("<h1 style='text-align: center;'>🔍 تحقق من حالة الحساب</h1>", unsafe_allow_html=True)
+st.set_page_config(
+    page_title="تحقق من حالة الحساب", 
+    page_icon="🔍", 
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
 
-col1, col2 = st.columns([3, 1])
-with col1:
-    user_input = st.text_input("📎 أدخل رابط الحساب أو اسم المستخدم:", placeholder="https://www.reddit.com/user/username أو username")
-with col2:
-    platform = st.selectbox("🌐 اختر المنصة:", ["reddit"])
+# CSS مخصص
+st.markdown("""
+<style>
+    .stTextInput input {
+        direction: ltr;
+        text-align: left;
+    }
+    .stButton button {
+        width: 100%;
+    }
+    .result-box {
+        padding: 1.5rem;
+        border-radius: 0.5rem;
+        margin: 1rem 0;
+    }
+    .active { background-color: #e6f7e6; border-left: 5px solid #4CAF50; }
+    .suspended { background-color: #ffebee; border-left: 5px solid #F44336; }
+    .not-found { background-color: #fff3e0; border-left: 5px solid #FF9800; }
+    .deleted { background-color: #f1f1f1; border-left: 5px solid #607D8B; }
+    .unknown { background-color: #f5f5f5; border-left: 5px solid #9E9E9E; }
+</style>
+""", unsafe_allow_html=True)
 
-if st.button("تحقق", type="primary"):
+# عنوان التطبيق
+st.markdown("<h1 style='text-align: center; margin-bottom: 1.5rem;'>🔍 تحقق من حالة حساب Reddit</h1>", unsafe_allow_html=True)
+
+# مربع الإدخال
+input_col, button_col = st.columns([4, 1])
+with input_col:
+    user_input = st.text_input(
+        "أدخل رابط الحساب أو اسم المستخدم:",
+        placeholder="مثال: nedaa_7 أو https://www.reddit.com/user/nedaa_7/",
+        key="user_input"
+    )
+
+with button_col:
+    st.write("")  # للتباعد
+    check_button = st.button("تحقق الآن", type="primary")
+
+# عرض النتائج
+if check_button:
     if user_input:
-        with st.spinner("🔎 جاري التحقق..."):
-            status, color = check_reddit_status(user_input)
-            
-            # عرض النتيجة مع تنسيق مناسب
-            result_container = st.container()
-            if color == "green":
-                result_container.success(f"## {status}")
-            elif color == "red":
-                result_container.error(f"## {status}")
-            elif color == "orange":
-                result_container.warning(f"## {status}")
-            elif color == "black":
-                result_container.markdown(f"## {status}", unsafe_allow_html=True)
-            else:
-                result_container.info(f"## {status}")
-            
-            # عرض رابط الحساب
-            if "reddit.com" in user_input:
-                account_url = user_input
-            else:
-                account_url = f"https://www.reddit.com/user/{user_input}/"
-            
-            st.markdown(f"🔗 [رابط الحساب على Reddit]({account_url})", unsafe_allow_html=True)
+        username = extract_reddit_username(user_input)
+        if username:
+            with st.spinner("جاري التحقق من الحساب..."):
+                status, color, profile_url = check_reddit_status(username)
+                
+                # تحديد فئة CSS بناءً على اللون
+                css_class = {
+                    "green": "active",
+                    "red": "suspended",
+                    "orange": "not-found",
+                    "black": "deleted",
+                    "gray": "unknown"
+                }.get(color, "unknown")
+                
+                # عرض النتيجة في مربع مخصص
+                st.markdown(
+                    f"""
+                    <div class="result-box {css_class}">
+                        <h3 style="margin-top: 0;">{status}</h3>
+                        <p><strong>اسم المستخدم:</strong> {username}</p>
+                        <p><a href="{profile_url}" target="_blank">رابط الحساب على Reddit</a></p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+                
+                # إضافة بعض المعلومات الإضافية
+                if color == "green":
+                    st.info("💡 هذا الحساب نشط ويظهر محتواه بشكل طبيعي.")
+                elif color == "red":
+                    st.error("⚠️ هذا الحساب موقوف من قبل إدارة Reddit.")
+                elif color == "orange":
+                    st.warning("🔎 لم يتم العثور على حساب بهذا الاسم. تأكد من كتابة اسم المستخدم بشكل صحيح.")
+        else:
+            st.warning("⚠️ لم يتم التعرف على اسم المستخدم. تأكد من إدخال رابط أو اسم مستخدم صحيح.")
     else:
-        st.warning("⚠️ من فضلك أدخل رابط الحساب أو اسم المستخدم أولاً.")
+        st.warning("⚠️ يرجى إدخال رابط الحساب أو اسم المستخدم أولاً.")
 
 # تذييل الصفحة
 st.markdown("---")
 st.markdown("""
-<style>
-.footer {
-    font-size: 0.8em;
-    text-align: center;
-    color: #666;
-}
-</style>
-<div class="footer">
-    تم التطوير باستخدام Streamlit و Python | يمكنك إضافة منصات أخرى في المستقبل
-</div>
+<p style="text-align: center; color: #666; font-size: 0.9rem;">
+    أداة التحقق من حسابات Reddit | تم التطوير باستخدام Python و Streamlit
+</p>
 """, unsafe_allow_html=True)
