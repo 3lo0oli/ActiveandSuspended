@@ -1,3 +1,2 @@
 streamlit
-httpx
-beautifulsoup4
+selenium
