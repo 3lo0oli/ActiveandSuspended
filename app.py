@@ -5,15 +5,13 @@ from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import TimeoutException, WebDriverException
 import time
 
-# إعداد Streamlit
 st.set_page_config(page_title="فحص حسابات Reddit", page_icon="🔍")
 st.title("🔎 أداة فحص حالة حسابات Reddit")
 st.markdown("تحقق هل الحساب نشط أم موقوف على Reddit عبر محاكاة حقيقية للموقع.")
 
-# إدخال الروابط
 user_input = st.text_area("✏️ أدخل روابط حسابات Reddit (رابط في كل سطر):")
 
-# دالة تشغيل المتصفح
+# إعداد المتصفح مرة واحدة
 def get_driver():
     chrome_options = Options()
     chrome_options.add_argument("--headless")
@@ -22,18 +20,15 @@ def get_driver():
     chrome_options.add_argument("--window-size=1280x720")
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_argument("--log-level=3")
-
     return webdriver.Chrome(options=chrome_options)
 
-# فحص رابط فردي
-def check_reddit_status(url):
+# فحص رابط واحد باستخدام متصفح واحد
+def check_reddit_status(driver, url):
     try:
-        driver = get_driver()
         driver.set_page_load_timeout(15)
         driver.get(url)
-        time.sleep(5)
+        time.sleep(2)
         html = driver.page_source.lower()
-        driver.quit()
 
         if "this account has been suspended" in html:
             return "🚫 موقوف"
@@ -42,18 +37,27 @@ def check_reddit_status(url):
         else:
             return "✅ نشط"
     except (TimeoutException, WebDriverException) as e:
-        return f"❌ خطأ: {str(e)}"
+        return f"⚠️ خطأ أثناء الفحص"
 
 # عند الضغط
 if st.button("تحقق الآن"):
     if user_input.strip():
-        st.subheader("📊 النتائج:")
         links = [line.strip() for line in user_input.strip().splitlines() if line.strip()]
-        for url in links:
-            if not url.startswith("https://www.reddit.com/user/"):
-                st.warning(f"الرابط غير صحيح: {url}")
-                continue
-            result = check_reddit_status(url)
-            st.write(f"🔗 [{url}]({url}) → {result}")
+        st.subheader("📊 النتائج:")
+
+        with st.spinner("جاري الفحص..."):
+            driver = get_driver()
+            results = {}
+            for i, url in enumerate(links, 1):
+                if not url.startswith("https://www.reddit.com/user/"):
+                    results[url] = "❌ رابط غير صالح"
+                    continue
+                status = check_reddit_status(driver, url)
+                results[url] = status
+            driver.quit()
+
+        # عرض النتائج
+        for url, status in results.items():
+            st.write(f"🔗 [{url}]({url}) → {status}")
     else:
         st.warning("يرجى إدخال روابط أولًا.")
