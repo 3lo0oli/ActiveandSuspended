@@ -2,25 +2,34 @@ import streamlit as st
 import httpx
 from bs4 import BeautifulSoup
 
+# إعداد الصفحة
 st.set_page_config(page_title="فحص حسابات Reddit", page_icon="🔍")
 st.title("🔎 أداة فحص حالة حسابات Reddit")
-st.markdown("تحقق هل الحساب نشط أم موقوف على Reddit بدون متصفح، عبر تحليل المحتوى مباشرة.")
+st.markdown("تحقق هل الحساب نشط أم موقوف على Reddit بدون متصفح، عبر تحليل النسخة القديمة من الموقع مباشرة.")
 
+# إدخال الروابط
 user_input = st.text_area("✏️ أدخل روابط حسابات Reddit (رابط في كل سطر):")
 
-# فحص الرابط باستخدام httpx و BeautifulSoup
+# الدالة التي تتحقق من حالة الحساب
 def check_reddit_status_httpx(url):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
+
+    # التحويل إلى نسخة Reddit القديمة
+    url = url.replace("https://www.reddit.com", "https://old.reddit.com")
+
     try:
         response = httpx.get(url, headers=headers, timeout=10)
         if response.status_code == 404:
             return "❌ غير موجود"
+
         html = response.text.lower()
+
+        # تحليل النص
         if "this account has been suspended" in html:
             return "🚫 موقوف"
-        elif "sorry, nobody on reddit goes by that name" in html:
+        elif "nobody on reddit goes by that name" in html:
             return "❌ غير موجود"
         else:
             return "✅ نشط"
@@ -29,6 +38,7 @@ def check_reddit_status_httpx(url):
     except Exception as e:
         return f"⚠️ خطأ: {str(e)}"
 
+# عند الضغط على الزر
 if st.button("تحقق الآن"):
     if user_input.strip():
         links = [line.strip() for line in user_input.strip().splitlines() if line.strip()]
