@@ -12,13 +12,13 @@ def normalize_url(url):
     """معالجة الروابط المدخلة لتكون بصيغة صحيحة"""
     url = url.strip()
     if not url.startswith(("http://", "https://")):
-        if not url.startswith("u/") and not url.startswith("user/"):
+        if not url.startswith(("u/", "user/")):
             url = "user/" + url
         url = "https://www.reddit.com/" + url
     return url.rstrip("/")
 
 def check_reddit_status(url):
-    """فحص حالة الحساب باستخدام HTTPX"""
+    """فحص حالة الحساب باستخدام HTTPX مع تحليل المحتوى"""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
@@ -26,13 +26,21 @@ def check_reddit_status(url):
     try:
         response = httpx.get(url, headers=headers, timeout=10, follow_redirects=True)
         
-        # التحقق من حالة الحساب
+        # التحقق من كود الحالة أولاً
         if response.status_code == 404:
             return "❌ غير موجود"
-        elif "suspended" in response.text.lower():
+        
+        # ثم التحقق من محتوى الصفحة
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # البحث عن علامات الحساب الموقوف
+        suspended_div = soup.find('div', {'id': 'shreddit-forbidden'})
+        if suspended_div and "This account has been suspended" in suspended_div.get_text():
             return "🚫 موقوف"
-        else:
-            return "✅ نشط"
+            
+        # إذا لم يكن موقوفاً وغير موجود، فهو نشط
+        return "✅ نشط"
+        
     except httpx.RequestError:
         return "⚠️ خطأ في الاتصال"
     except Exception as e:
@@ -70,6 +78,8 @@ if st.button("🔍 تحقق الآن"):
 st.markdown("---")
 st.markdown("""
 **ملاحظات:**
-- الأداة تتحقق من حالة حساب Reddit فقط (نشط/موقوف/غير موجود)
-- لا يتم حفظ أي بيانات أو معلومات
+- يعتمد الكود على تحليل كود الحالة HTTP ومحتوى صفحة Reddit
+- الحساب النشط يعرض صفحة المستخدم مع منشوراته
+- الحساب الموقوف يعرض رسالة "This account has been suspended"
+- الحساب غير موجود يعطي خطأ 404
 """)
