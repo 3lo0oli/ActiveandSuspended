@@ -46,7 +46,7 @@ def build_reddit_url(username):
     return f"https://www.reddit.com/user/{username}"
 
 def check_reddit_status(username):
-    """فحص حالة الحساب مع كشف دقيق للحالات المختلفة"""
+    """فحص حالة الحساب مع كشف دقيق جداً للحالات المختلفة"""
     if not username or len(username) < 3:
         return "❌ اسم المستخدم غير صالح", None
     
@@ -59,10 +59,13 @@ def check_reddit_status(username):
         "Accept-Encoding": "gzip, deflate, br",
         "Connection": "keep-alive",
         "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Cache-Control": "no-cache"
     }
     
     try:
-        with httpx.Client(timeout=20, follow_redirects=True) as client:
+        with httpx.Client(timeout=25, follow_redirects=True) as client:
             response = client.get(url, headers=headers)
             
             # التحقق من كود الحالة أولاً
@@ -77,102 +80,146 @@ def check_reddit_status(username):
             html_content = response.text
             soup = BeautifulSoup(html_content, 'html.parser')
             
-            # 1. فحص shreddit-forbidden بالتحديد (الأهم)
-            forbidden_div = soup.find('div', {'id': 'shreddit-forbidden'})
-            if forbidden_div:
-                # البحث عن رسالة الإيقاف داخل هذا العنصر
-                suspended_title = forbidden_div.find('h1', {'id': 'shreddit-forbidden-title'})
-                if suspended_title and "suspended" in suspended_title.get_text().lower():
-                    return "🚫 موقوف", url
-                
-                # أو فحص النص الكامل في العنصر المحظور
-                forbidden_text = forbidden_div.get_text().lower()
-                if "suspended" in forbidden_text:
-                    return "🚫 موقوف", url
-                elif "not found" in forbidden_text or "doesn't exist" in forbidden_text:
-                    return "❌ غير موجود", url
-            
-            # 2. فحص العناصر الأخرى للإيقاف
-            suspended_elements = [
-                soup.find('div', {'id': re.compile(r'.*suspend.*', re.I)}),
-                soup.find('div', {'class': re.compile(r'.*suspend.*', re.I)}),
-                soup.find('h1', string=re.compile(r'.*suspended.*', re.I)),
-                soup.find('p', string=re.compile(r'.*suspended.*', re.I))
-            ]
-            
-            for element in suspended_elements:
-                if element:
-                    return "🚫 موقوف", url
-            
-            # 3. فحص النص الكامل للكلمات المفتاحية
+            # إزالة المساحات الزائدة من HTML
+            clean_html = re.sub(r'\s+', ' ', html_content.lower())
             full_text = soup.get_text(separator=' ', strip=True).lower()
             
-            # علامات الحساب الموقوف
-            suspended_patterns = [
+            # ============ 1. فحص الحسابات الموقوفة أولاً (أولوية عالية) ============
+            
+            # أ) فحص shreddit-forbidden بالتحديد
+            forbidden_div = soup.find('div', {'id': 'shreddit-forbidden'})
+            if forbidden_div:
+                forbidden_text = forbidden_div.get_text().lower()
+                # التأكد من وجود كلمة suspended مع تجاهل الكلمات الأخرى
+                if "suspended" in forbidden_text and "account" in forbidden_text:
+                    return "🚫 موقوف", url
+                # فحص العنوان المحدد
+                title_element = forbidden_div.find('h1', {'id': 'shreddit-forbidden-title'})
+                if title_element and "suspended" in title_element.get_text().lower():
+                    return "🚫 موقوف", url
+            
+            # ب) فحص العناصر الأخرى للإيقاف
+            suspended_selectors = [
+                'div[id*="forbidden"]',
+                'div[class*="suspended"]',
+                'div[data-testid*="suspended"]',
+                '.suspended-account',
+                '#suspended-message'
+            ]
+            
+            for selector in suspended_selectors:
+                elements = soup.select(selector)
+                for element in elements:
+                    if element and "suspended" in element.get_text().lower():
+                        return "🚫 موقوف", url
+            
+            # ج) فحص النصوص الدالة على الإيقاف بدقة عالية
+            suspended_exact_phrases = [
                 "this account has been suspended",
                 "account has been suspended", 
                 "user has been suspended",
+                "account is suspended",
                 "suspended account",
-                "account suspended",
                 "permanently suspended",
-                "temporarily suspended",
-                "banned account",
-                "account banned"
+                "temporarily suspended"
             ]
             
-            for pattern in suspended_patterns:
-                if pattern in full_text:
+            for phrase in suspended_exact_phrases:
+                if phrase in full_text:
                     return "🚫 موقوف", url
             
-            # 4. فحص علامات الحساب المحذوف
-            deleted_patterns = [
+            # ============ 2. فحص الحسابات المحذوفة ============
+            deleted_exact_phrases = [
                 "this user has deleted their account",
-                "account has been deleted",
                 "user deleted their account",
-                "deleted account",
-                "account deleted"
+                "account has been deleted",
+                "deleted their account"
             ]
             
-            for pattern in deleted_patterns:
-                if pattern in full_text:
+            for phrase in deleted_exact_phrases:
+                if phrase in full_text:
                     return "🗑️ محذوف", url
             
-            # 5. فحص العناصر التي تدل على حساب نشط
-            # البحث عن عناصر الملف الشخصي النشط
-            active_selectors = [
+            # ============ 3. فحص الحسابات النشطة (بعد التأكد من عدم الإيقاف) ============
+            
+            # أ) البحث عن عناصر الملف الشخصي النشط
+            active_profile_selectors = [
                 'div[data-testid="user-profile"]',
                 'div[data-testid="profile-hover-card"]',
                 'section[aria-label*="profile"]',
-                'div[class*="profile"]',
-                'div[data-testid*="post"]',
-                'div[data-testid*="comment"]'
+                'div[class*="user-profile"]',
+                'main[role="main"]',
+                'div[data-testid*="profile"]'
             ]
             
-            has_active_elements = False
-            for selector in active_selectors:
+            has_profile_elements = False
+            for selector in active_profile_selectors:
                 if soup.select(selector):
-                    has_active_elements = True
+                    has_profile_elements = True
                     break
             
-            # 6. فحص النص للكلمات المفتاحية للحساب النشط
-            active_keywords = [
-                "post karma", "comment karma", "joined reddit",
-                "cake day", "trophy case", "overview",
-                "posts", "comments", "about", "karma:",
-                "reddit premium", "achievements"
+            # ب) البحث عن محتوى المستخدم
+            content_selectors = [
+                'div[data-testid*="post"]',
+                'div[data-testid*="comment"]',
+                'article',
+                '.post',
+                'div[class*="post"]'
             ]
             
-            has_active_text = any(keyword in full_text for keyword in active_keywords)
+            has_content_elements = False
+            for selector in content_selectors:
+                if soup.select(selector):
+                    has_content_elements = True
+                    break
             
-            # 7. القرار النهائي
-            if has_active_elements or has_active_text:
+            # ج) فحص الكلمات المفتاحية للحساب النشط
+            active_keywords = [
+                "post karma", "comment karma", "awardee karma",
+                "cake day", "joined", "reddit premium",
+                "trophy case", "overview", "posts", "comments",
+                "about", "karma", "achievements", "badges"
+            ]
+            
+            has_active_keywords = sum(1 for keyword in active_keywords if keyword in full_text)
+            
+            # د) فحص عناصر التنقل في الملف الشخصي
+            navigation_elements = [
+                soup.find('nav'),
+                soup.find('div', {'role': 'tablist'}),
+                soup.select('a[href*="posts"]'),
+                soup.select('a[href*="comments"]'),
+                soup.select('a[href*="overview"]')
+            ]
+            
+            has_navigation = any(element for element in navigation_elements if element)
+            
+            # ============ 4. القرار النهائي المحسن ============
+            
+            # إذا وُجدت عناصر الملف الشخصي + محتوى أو كلمات مفتاحية
+            if has_profile_elements and (has_content_elements or has_active_keywords >= 2):
                 return "✅ نشط", url
-            elif "reddit" in full_text and len(full_text) > 300:
-                # التحقق من وجود عناصر الواجهة العامة
-                if any(word in full_text for word in ["user", "profile", "redditor"]):
+            
+            # إذا وُجدت عناصر التنقل + كلمات مفتاحية
+            elif has_navigation and has_active_keywords >= 1:
+                return "✅ نشط", url
+            
+            # إذا وُجدت كلمات مفتاحية كثيرة (دليل على النشاط)
+            elif has_active_keywords >= 3:
+                return "✅ نشط", url
+            
+            # فحص وجود محتوى Reddit عام
+            elif "reddit" in full_text and len(full_text) > 200:
+                # التحقق من عدم وجود رسائل خطأ
+                error_indicators = ["error", "not found", "doesn't exist", "unavailable"]
+                has_errors = any(error in full_text for error in error_indicators)
+                
+                if not has_errors and any(word in full_text for word in ["user", "profile", "redditor"]):
                     return "✅ نشط", url
                 else:
                     return "❓ حالة غير واضحة", url
+            
+            # إذا لم توجد أي علامات واضحة
             else:
                 return "❌ غير موجود", url
                     
