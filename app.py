@@ -4,141 +4,93 @@ from bs4 import BeautifulSoup
 import re
 import time
 
-# إعداد واجهة المستخدم
-st.set_page_config(
-    page_title="فحص حالة حساب Reddit", 
-    page_icon="🔍", 
-    layout="centered",
-    initial_sidebar_state="collapsed"
-)
+st.set_page_config(page_title="Twitter Status Checker", page_icon="🐦", layout="centered")
 
-st.title("🔎 فحص حالة حساب Reddit")
+st.title("🐦 فحص حالة حساب تويتر")
 st.markdown("""
-<div style='text-align: center; padding: 20px; background-color: #f0f2f6; border-radius: 10px; margin-bottom: 30px;'>
-    <h3 style='color: #FF4500;'>أداة التحقق من حسابات Reddit</h3>
-    <p>تحقق هل الحساب <strong>نشط</strong> أو <strong>موقوف</strong> فقط</p>
+<div style='background-color:#e6f2ff;padding:15px;border-radius:10px'>
+تحقق هل حساب تويتر (X) نشط أو موقوف أو غير موجود
 </div>
 """, unsafe_allow_html=True)
 
-def clean_username(input_text):
-    input_text = input_text.strip()
-    if "reddit.com" in input_text:
-        match = re.search(r'/(?:u|user)/([^/?]+)', input_text)
-        if match:
-            return match.group(1)
-    input_text = re.sub(r'^(u/|user/|@|/)', '', input_text)
-    return re.sub(r'[^a-zA-Z0-9_-]', '', input_text)
+def clean_username(username):
+    username = username.strip()
+    username = re.sub(r"(https?://)?(www\.)?(x|twitter)\.com/", "", username)
+    username = re.sub(r"^@", "", username)
+    username = username.split("?")[0]
+    return username
 
-def build_reddit_url(username):
-    return f"https://www.reddit.com/user/{username}"
+def build_twitter_url(username):
+    return f"https://twitter.com/{username}"
 
-def check_reddit_status(username):
-    if not username or len(username) < 3:
-        return "🚫 موقوف", None
+def check_twitter_status(username):
+    if not username:
+        return "❓ غير معروف", None
 
-    url = build_reddit_url(username)
+    url = build_twitter_url(username)
     headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "text/html",
-        "Accept-Language": "en-US,en;q=0.5"
+        "User-Agent": "Mozilla/5.0"
     }
 
     try:
-        with httpx.Client(timeout=25, follow_redirects=True) as client:
+        with httpx.Client(timeout=20, follow_redirects=True) as client:
             response = client.get(url, headers=headers)
-            soup = BeautifulSoup(response.text, 'html.parser')
-            full_text = soup.get_text(separator=' ', strip=True).lower()
 
-            # 🔍 فحص الإيقاف
-            suspended_phrases = [
-                "this account has been suspended",
-                "account has been suspended", 
-                "user has been suspended",
-                "account is suspended"
-            ]
-            if any(phrase in full_text for phrase in suspended_phrases):
+            if response.status_code == 404:
+                return "❓ غير موجود", url
+
+            soup = BeautifulSoup(response.text, "html.parser")
+            text = soup.get_text(separator=' ', strip=True).lower()
+
+            # تحقق من وجود الحساب موقوف
+            if "account suspended" in text or "this account doesn’t exist" in text:
                 return "🚫 موقوف", url
 
-            # ✅ فحص النشاط
-            profile_elements = [
-                soup.find('div', {'data-testid': 'user-profile'}),
-                soup.find('main'),
-                soup.find('nav'),
-                soup.select_one('article'),
-                soup.select_one('div[data-testid*="post"]')
-            ]
-            active_keywords = [
-                "post karma", "comment karma", "joined", "trophy case",
-                "reddit premium", "overview", "posts", "comments",
-                "cake day", "karma", "about"
-            ]
-            matches = sum(1 for kw in active_keywords if kw in full_text)
-            has_ui = any(profile_elements)
-
-            if matches >= 2 or has_ui:
+            # تحقق من وجود الحساب نشط
+            if "followers" in text or "following" in text or "posts" in text:
                 return "✅ نشط", url
 
-            # 🟥 لا دلائل كافية = نعتبره موقوف
-            return "🚫 موقوف", url
+            # fallback
+            return "❓ غير معروف", url
 
-    except Exception:
-        return "🚫 موقوف", url
+    except Exception as e:
+        return "❓ غير معروف", url
 
-# واجهة الإدخال
+# إدخال المستخدم
 col1, col2 = st.columns([3, 1])
 with col1:
-    user_input = st.text_input(
-        "اسم المستخدم أو رابط الحساب:",
-        placeholder="مثال: username أو u/username أو https://reddit.com/u/username"
-    )
+    user_input = st.text_input("اسم المستخدم أو رابط الحساب:")
 with col2:
     st.markdown("<br>", unsafe_allow_html=True)
-    check_button = st.button("🔍 فحص الحساب", type="primary")
+    check_btn = st.button("🔍 فحص", type="primary")
 
-if check_button and user_input.strip():
+if check_btn and user_input.strip():
     username = clean_username(user_input)
     if not username:
-        st.error("❌ يرجى إدخال اسم مستخدم صالح")
+        st.warning("⚠️ يرجى إدخال اسم مستخدم صحيح.")
     else:
-        st.info(f"🔍 جارٍ فحص الحساب: **{username}**")
+        st.info(f"جارٍ فحص الحساب: {username}")
         progress_bar = st.progress(0)
-        status_text = st.empty()
         for i in range(100):
+            time.sleep(0.005)
             progress_bar.progress(i + 1)
-            if i < 30:
-                status_text.text("جارٍ الاتصال بـ Reddit...")
-            elif i < 70:
-                status_text.text("جارٍ تحليل البيانات...")
-            else:
-                status_text.text("جارٍ معالجة النتائج...")
-            time.sleep(0.01)
-
-        status, url = check_reddit_status(username)
+        status, profile_url = check_twitter_status(username)
         progress_bar.empty()
-        status_text.empty()
 
-        st.markdown("---")
-        st.subheader("📊 نتيجة الفحص:")
-
+        st.subheader("🔎 النتيجة:")
         if status == "✅ نشط":
-            st.success(f"**{status}**")
-            st.balloons()
+            st.success(f"الحساب {status}")
+        elif status == "🚫 موقوف":
+            st.error(f"الحساب {status}")
+        elif status == "❓ غير موجود":
+            st.warning(f"الحساب {status}")
         else:
-            st.error(f"**{status}**")
+            st.info(f"الحالة: {status}")
 
-        with st.expander("📋 تفاصيل الفحص"):
-            st.write(f"**اسم المستخدم:** {username}")
-            if url:
-                st.write(f"**الرابط:** {url}")
-            st.write(f"**وقت الفحص:** {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        st.markdown(f"[🔗 زيارة الحساب على تويتر]({profile_url})")
 
-elif check_button:
-    st.warning("⚠️ يرجى إدخال اسم مستخدم أو رابط الحساب أولاً")
+elif check_btn:
+    st.warning("⚠️ يرجى كتابة اسم المستخدم أولًا.")
 
 st.markdown("---")
-st.markdown("""
-<div style='text-align: center; color: #666; padding: 20px;'>
-    <p>🛠️ تم تطوير هذه الأداة لفحص حسابات Reddit بدقة</p>
-    <p>💻 باستخدام Streamlit | 🔒 سريع وآمن</p>
-</div>
-""", unsafe_allow_html=True)
+st.caption("تم التطوير باستخدام Streamlit | OpenAI")
