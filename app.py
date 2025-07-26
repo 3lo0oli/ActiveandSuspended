@@ -2,24 +2,65 @@ import streamlit as st
 import httpx
 from bs4 import BeautifulSoup
 
-# إعداد واجهة المستخدم
+# إعداد واجهة المستخدم مع خلفية داكنة
 st.set_page_config(page_title="فحص حسابات Reddit", page_icon="🔍", layout="wide")
 st.title("🔎 أداة فحص حالة حسابات Reddit")
 st.markdown("""
 تحقق من حالة حسابات Reddit (نشط/موقوف/غير موجود) باستخدام النسخة القديمة من الموقع.
 """)
 
-# أسلوب CSS مخصص
+# أسلوب CSS مخصص للواجهة الداكنة والروابط السوداء
 st.markdown("""
 <style>
+    /* الخلفية العامة */
+    .stApp {
+        background-color: #1E1E1E;
+        color: #FFFFFF;
+    }
+    
+    /* منطقة إدخال النص */
     .stTextArea textarea {
         min-height: 150px;
+        background-color: #2D2D2D;
+        color: #FFFFFF;
+        border: 1px solid #444;
     }
+    
+    /* شريط التقدم */
     .stProgress > div > div > div {
         background-color: #FF4B4B;
     }
-    .st-b7 {
+    
+    /* الروابط */
+    a {
+        color: #000000 !important;  /* روابط سوداء */
+        text-decoration: underline;
+    }
+    
+    /* الأزرار */
+    .stButton>button {
+        background-color: #4CAF50;
         color: white;
+        border: none;
+        padding: 10px 24px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 16px;
+        margin: 4px 2px;
+        cursor: pointer;
+        border-radius: 4px;
+    }
+    
+    /* البطاقات */
+    .stAlert {
+        background-color: #2D2D2D;
+        border-left: 4px solid #4CAF50;
+    }
+    
+    /* العناوين */
+    h1, h2, h3, h4, h5, h6 {
+        color: #FFFFFF;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -44,11 +85,9 @@ def check_reddit_status_httpx(url):
         response = httpx.get(url, headers=headers, timeout=15, follow_redirects=True)
         html = response.text.lower()
         
-        if response.status_code == 404 or "nobody on reddit goes by that name" in html:
-            return "❌ غير موجود"
-        elif "this account has been suspended" in html or "suspended" in html:
+        if "this account has been suspended" in html:
             return "🚫 موقوف"
-        elif "page not found" in html:
+        elif "nobody on reddit goes by that name" in html or response.status_code == 404:
             return "❌ غير موجود"
         else:
             return "✅ نشط"
@@ -91,9 +130,8 @@ if st.button("🔍 تحقق الآن", type="primary"):
                     normalized_url = normalize_url(url)
                     status = check_reddit_status_httpx(normalized_url)
                     results.append((normalized_url, status))
-                    stats[status.split()[0]] += 1  # حساب الإحصائيات
+                    stats[status.split()[0]] += 1
                     
-                    # تحديث شريط التقدم
                     progress = (i + 1) / len(links)
                     progress_bar.progress(progress)
                     status_text.text(f"جارٍ معالجة {i+1}/{len(links)} - {url[:30]}...")
@@ -101,7 +139,6 @@ if st.button("🔍 تحقق الآن", type="primary"):
                     results.append((url, f"⚠️ خطأ: {str(e)}"))
                     stats["⚠️ أخطاء"] += 1
         
-        # عرض النتائج
         st.success("✅ تم الانتهاء من التحقق!")
         
         # عرض الإحصائيات
@@ -114,7 +151,7 @@ if st.button("🔍 تحقق الآن", type="primary"):
         # عرض النتائج التفصيلية
         st.subheader("📊 النتائج التفصيلية:")
         for url, status in results:
-            st.markdown(f"- {status}: [{url}]({url})")
+            st.markdown(f"- **{status}**: [{url}]({url})", unsafe_allow_html=True)
         
         # زر نسخ النتائج
         result_text = "\n".join([f"{status}: {url}" for url, status in results])
@@ -132,5 +169,6 @@ st.markdown("---")
 st.markdown("""
 **ملاحظات:**
 - يعمل التطبيق عن طريق تحليل النسخة القديمة من Reddit (old.reddit.com)
-- قد تظهر بعض النتائج غير الدقيقة بسبب تغييرات في واجهة Reddit
+- الروابط تظهر باللون الأسود للوضوح
+- الخلفية الداكنة لتجربة مستخدم أفضل
 """)
