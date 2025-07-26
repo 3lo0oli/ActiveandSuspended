@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import re
 import time
 
+# إعداد واجهة المستخدم
 st.set_page_config(
     page_title="فحص حالة حساب Reddit", 
     page_icon="🔍", 
@@ -15,7 +16,7 @@ st.title("🔎 فحص حالة حساب Reddit")
 st.markdown("""
 <div style='text-align: center; padding: 20px; background-color: #f0f2f6; border-radius: 10px; margin-bottom: 30px;'>
     <h3 style='color: #FF4500;'>أداة التحقق من حسابات Reddit</h3>
-    <p>تحقق بدقة هل الحساب <strong>نشط</strong> أم <strong>موقوف</strong></p>
+    <p>تحقق هل الحساب <strong>نشط</strong> أو <strong>موقوف</strong> فقط</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -33,7 +34,7 @@ def build_reddit_url(username):
 
 def check_reddit_status(username):
     if not username or len(username) < 3:
-        return "🚫 موقوف", None  # نعتبره موقوف لو الاسم غير صالح
+        return "🚫 موقوف", None
 
     url = build_reddit_url(username)
     headers = {
@@ -48,45 +49,42 @@ def check_reddit_status(username):
             soup = BeautifulSoup(response.text, 'html.parser')
             full_text = soup.get_text(separator=' ', strip=True).lower()
 
-            # أولاً: فحص الحسابات الموقوفة
+            # 🔍 فحص الإيقاف
             suspended_phrases = [
                 "this account has been suspended",
                 "account has been suspended", 
                 "user has been suspended",
-                "account is suspended",
-                "permanently suspended",
-                "temporarily suspended"
+                "account is suspended"
             ]
             if any(phrase in full_text for phrase in suspended_phrases):
                 return "🚫 موقوف", url
 
-            # ثانياً: فحص الحسابات النشطة
-            active_keywords = [
-                "post karma", "comment karma", "awardee karma",
-                "cake day", "joined", "reddit premium",
-                "trophy case", "overview", "posts", "comments",
-                "about", "karma", "achievements", "badges",
-                "submitted", "gilded", "saved"
-            ]
-            active_matches = sum(1 for keyword in active_keywords if keyword in full_text)
-            has_profile_elements = any([
+            # ✅ فحص النشاط
+            profile_elements = [
                 soup.find('div', {'data-testid': 'user-profile'}),
                 soup.find('main'),
                 soup.find('nav'),
                 soup.select_one('article'),
                 soup.select_one('div[data-testid*="post"]')
-            ])
+            ]
+            active_keywords = [
+                "post karma", "comment karma", "joined", "trophy case",
+                "reddit premium", "overview", "posts", "comments",
+                "cake day", "karma", "about"
+            ]
+            matches = sum(1 for kw in active_keywords if kw in full_text)
+            has_ui = any(profile_elements)
 
-            if active_matches >= 2 or has_profile_elements:
+            if matches >= 2 or has_ui:
                 return "✅ نشط", url
 
-            # الباقي نعتبره موقوف
+            # 🟥 لا دلائل كافية = نعتبره موقوف
             return "🚫 موقوف", url
 
     except Exception:
         return "🚫 موقوف", url
 
-# واجهة المستخدم
+# واجهة الإدخال
 col1, col2 = st.columns([3, 1])
 with col1:
     user_input = st.text_input(
@@ -141,6 +139,6 @@ st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
     <p>🛠️ تم تطوير هذه الأداة لفحص حسابات Reddit بدقة</p>
-    <p>💻 مطور باستخدام Streamlit | 🔒 سريع وآمن</p>
+    <p>💻 باستخدام Streamlit | 🔒 سريع وآمن</p>
 </div>
 """, unsafe_allow_html=True)
