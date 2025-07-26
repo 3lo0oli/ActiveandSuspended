@@ -46,7 +46,7 @@ def build_reddit_url(username):
     return f"https://www.reddit.com/user/{username}"
 
 def check_reddit_status(username):
-    """فحص حالة الحساب مع معالجة محسنة للأخطاء"""
+    """فحص حالة الحساب مع آلية محسنة للكشف الدقيق"""
     if not username or len(username) < 3:
         return "❌ اسم المستخدم غير صالح", None
     
@@ -62,10 +62,10 @@ def check_reddit_status(username):
     }
     
     try:
-        with httpx.Client(timeout=15, follow_redirects=True) as client:
+        with httpx.Client(timeout=20, follow_redirects=True) as client:
             response = client.get(url, headers=headers)
             
-            # التحقق من كود الحالة
+            # التحقق من كود الحالة أولاً
             if response.status_code == 404:
                 return "❌ غير موجود", url
             elif response.status_code == 403:
@@ -73,49 +73,86 @@ def check_reddit_status(username):
             elif response.status_code != 200:
                 return f"⚠️ خطأ HTTP: {response.status_code}", url
             
-            # تحليل محتوى الصفحة
-            soup = BeautifulSoup(response.text, 'html.parser')
-            page_text = soup.get_text().lower()
+            # تحليل شامل لمحتوى الصفحة
+            html_content = response.text
+            soup = BeautifulSoup(html_content, 'html.parser')
             
-            # البحث عن علامات الحساب الموقوف
-            suspended_indicators = [
-                "this account has been suspended",
-                "account suspended",
-                "user suspended",
-                "suspended account"
+            # التحقق من العلامات المباشرة في HTML
+            # فحص علامات الإيقاف في العناصر المخصصة
+            suspended_selectors = [
+                'div[id*="suspend"]',
+                'div[class*="suspend"]',
+                'div[data-testid*="suspend"]',
+                'h1:contains("suspended")',
+                'p:contains("suspended")'
             ]
             
-            for indicator in suspended_indicators:
-                if indicator in page_text:
+            for selector in suspended_selectors:
+                if soup.select(selector):
                     return "🚫 موقوف", url
             
-            # البحث عن علامات الحساب المحذوف
-            deleted_indicators = [
-                "this user has deleted their account",
-                "deleted account",
-                "account deleted"
+            # فحص النص الكامل بطريقة محسنة
+            full_text = soup.get_text(separator=' ', strip=True).lower()
+            
+            # علامات الحساب الموقوف - محسنة
+            suspended_patterns = [
+                "this account has been suspended",
+                "account has been suspended",
+                "user has been suspended",
+                "suspended account",
+                "account suspended",
+                "permanently suspended",
+                "temporarily suspended"
             ]
             
-            for indicator in deleted_indicators:
-                if indicator in page_text:
+            for pattern in suspended_patterns:
+                if pattern in full_text:
+                    return "🚫 موقوف", url
+            
+            # فحص علامات الحساب المحذوف
+            deleted_patterns = [
+                "this user has deleted their account",
+                "account has been deleted",
+                "user deleted",
+                "deleted account"
+            ]
+            
+            for pattern in deleted_patterns:
+                if pattern in full_text:
                     return "🗑️ محذوف", url
             
-            # التحقق من وجود محتوى المستخدم
-            user_content_indicators = [
-                "overview", "posts", "comments", "karma",
-                "cake day", "post karma", "comment karma"
+            # فحص العناصر التي تدل على حساب نشط
+            active_indicators = [
+                soup.find('div', {'data-testid': 'user-profile'}),
+                soup.find('section', {'aria-label': 'User profile'}),
+                soup.select('div[data-testid*="post"]'),
+                soup.select('div[data-testid*="comment"]'),
+                soup.find_all('span', string=re.compile(r'karma|cake day|joined', re.I))
             ]
             
-            has_user_content = any(indicator in page_text for indicator in user_content_indicators)
+            # التحقق من وجود أي عنصر يدل على النشاط
+            has_active_elements = any(indicator for indicator in active_indicators if indicator)
             
-            if has_user_content:
+            # فحص النص للكلمات المفتاحية للحساب النشط
+            active_keywords = [
+                "post karma", "comment karma", "joined reddit",
+                "cake day", "trophy case", "overview",
+                "posts", "comments", "about"
+            ]
+            
+            has_active_text = any(keyword in full_text for keyword in active_keywords)
+            
+            # قرار نهائي محسن
+            if has_active_elements or has_active_text:
                 return "✅ نشط", url
-            else:
-                # التحقق الإضافي للتأكد
-                if "reddit" in page_text and len(page_text) > 1000:
-                    return "✅ نشط (محتوى محدود)", url
+            elif "reddit" in full_text and len(full_text) > 500:
+                # إذا كان هناك محتوى Reddit لكن لا يوجد علامات واضحة
+                if "user" in full_text or "profile" in full_text:
+                    return "✅ نشط", url
                 else:
                     return "❓ حالة غير واضحة", url
+            else:
+                return "❌ غير موجود", url
                     
     except httpx.TimeoutException:
         return "⏱️ انتهت مهلة الاتصال", url
@@ -194,46 +231,7 @@ if check_button and user_input.strip():
 elif check_button:
     st.warning("⚠️ يرجى إدخال اسم مستخدم أو رابط الحساب أولاً")
 
-# قسم المساعدة والأمثلة
-st.markdown("---")
-st.subheader("💡 أمثلة على الاستخدام:")
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.info("**اسم المستخدم:**\n`spez`")
-with col2:
-    st.info("**مع البادئة:**\n`u/spez`")
-with col3:
-    st.info("**رابط كامل:**\n`reddit.com/u/spez`")
-
-# معلومات حول الحالات المختلفة
-with st.expander("📖 شرح حالات الحسابات"):
-    st.markdown("""
-    **الحالات المختلفة للحسابات:**
-    
-    - **✅ نشط:** الحساب يعمل بشكل طبيعي ويمكن الوصول إليه
-    - **🚫 موقوف:** الحساب تم إيقافه من قبل إدارة Reddit
-    - **❌ غير موجود:** اسم المستخدم غير مسجل أو خاطئ
-    - **🗑️ محذوف:** المستخدم حذف حسابه بنفسه
-    - **❓ حالة غير واضحة:** يحتاج إلى فحص يدوي إضافي
-    """)
-
-# معلومات فنية
-with st.expander("⚙️ معلومات تقنية"):
-    st.markdown("""
-    **كيف يعمل الفحص:**
-    
-    1. تنظيف وتحليل المدخلات المختلفة
-    2. إرسال طلب HTTP إلى Reddit
-    3. تحليل كود الاستجابة ومحتوى الصفحة
-    4. البحث عن علامات الحالة المختلفة
-    5. عرض النتيجة مع الرابط المباشر
-    
-    **ملاحظات مهمة:**
-    - يستغرق الفحص عادة 2-5 ثوانٍ
-    - النتائج دقيقة بنسبة عالية جداً
-    - يعمل مع جميع أنواع أسماء المستخدمين
-    """)
 
 # تذييل الصفحة
 st.markdown("---")
