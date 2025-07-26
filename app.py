@@ -4,7 +4,6 @@ from bs4 import BeautifulSoup
 import re
 import time
 
-# إعداد واجهة المستخدم
 st.set_page_config(
     page_title="فحص حالة حساب Reddit", 
     page_icon="🔍", 
@@ -16,7 +15,7 @@ st.title("🔎 فحص حالة حساب Reddit")
 st.markdown("""
 <div style='text-align: center; padding: 20px; background-color: #f0f2f6; border-radius: 10px; margin-bottom: 30px;'>
     <h3 style='color: #FF4500;'>أداة التحقق من حسابات Reddit</h3>
-    <p>تحقق من حالة أي حساب Reddit (نشط / موقوف / محذوف / غير موجود)</p>
+    <p>تحقق بدقة هل الحساب <strong>نشط</strong> أم <strong>موقوف</strong></p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -34,10 +33,9 @@ def build_reddit_url(username):
 
 def check_reddit_status(username):
     if not username or len(username) < 3:
-        return "❌ اسم المستخدم غير صالح", None
+        return "🚫 موقوف", None  # نعتبره موقوف لو الاسم غير صالح
 
     url = build_reddit_url(username)
-
     headers = {
         "User-Agent": "Mozilla/5.0",
         "Accept": "text/html",
@@ -47,11 +45,10 @@ def check_reddit_status(username):
     try:
         with httpx.Client(timeout=25, follow_redirects=True) as client:
             response = client.get(url, headers=headers)
-            html_content = response.text
-            soup = BeautifulSoup(html_content, 'html.parser')
+            soup = BeautifulSoup(response.text, 'html.parser')
             full_text = soup.get_text(separator=' ', strip=True).lower()
 
-            # ✅ فحص الحسابات الموقوفة أولاً
+            # أولاً: فحص الحسابات الموقوفة
             suspended_phrases = [
                 "this account has been suspended",
                 "account has been suspended", 
@@ -63,17 +60,7 @@ def check_reddit_status(username):
             if any(phrase in full_text for phrase in suspended_phrases):
                 return "🚫 موقوف", url
 
-            # 🗑️ فحص الحسابات المحذوفة
-            deleted_phrases = [
-                "this user has deleted their account",
-                "user deleted their account",
-                "account has been deleted",
-                "deleted their account"
-            ]
-            if any(phrase in full_text for phrase in deleted_phrases):
-                return "🗑️ محذوف", url
-
-            # ✅ فحص النشاط
+            # ثانياً: فحص الحسابات النشطة
             active_keywords = [
                 "post karma", "comment karma", "awardee karma",
                 "cake day", "joined", "reddit premium",
@@ -82,28 +69,24 @@ def check_reddit_status(username):
                 "submitted", "gilded", "saved"
             ]
             active_matches = sum(1 for keyword in active_keywords if keyword in full_text)
-            if active_matches >= 2:
+            has_profile_elements = any([
+                soup.find('div', {'data-testid': 'user-profile'}),
+                soup.find('main'),
+                soup.find('nav'),
+                soup.select_one('article'),
+                soup.select_one('div[data-testid*="post"]')
+            ])
+
+            if active_matches >= 2 or has_profile_elements:
                 return "✅ نشط", url
 
-            # ❓ حالة غير واضحة أو عامة
-            if "reddit" in full_text and len(full_text) > 100:
-                unclear_errors = [
-                    "page not found", "user not found", "doesn't exist",
-                    "no longer available", "been removed"
-                ]
-                if not any(err in full_text for err in unclear_errors):
-                    return "❓ حالة غير واضحة", url
+            # الباقي نعتبره موقوف
+            return "🚫 موقوف", url
 
-            return "❌ غير موجود", url
+    except Exception:
+        return "🚫 موقوف", url
 
-    except httpx.TimeoutException:
-        return "⏱️ انتهت مهلة الاتصال", url
-    except httpx.ConnectError:
-        return "🌐 خطأ في الاتصال بالإنترنت", url
-    except Exception as e:
-        return f"⚠️ خطأ غير متوقع: {str(e)[:50]}...", url
-
-# الواجهة
+# واجهة المستخدم
 col1, col2 = st.columns([3, 1])
 with col1:
     user_input = st.text_input(
@@ -139,17 +122,11 @@ if check_button and user_input.strip():
         st.markdown("---")
         st.subheader("📊 نتيجة الفحص:")
 
-        if status.startswith("✅"):
+        if status == "✅ نشط":
             st.success(f"**{status}**")
             st.balloons()
-            if url:
-                st.markdown(f"🔗 [زيارة الحساب]({url})")
-        elif status.startswith("🚫"):
-            st.error(f"**{status}**")
-        elif status.startswith("❌") or status.startswith("🗑️"):
-            st.warning(f"**{status}**")
         else:
-            st.info(f"**{status}**")
+            st.error(f"**{status}**")
 
         with st.expander("📋 تفاصيل الفحص"):
             st.write(f"**اسم المستخدم:** {username}")
@@ -163,7 +140,7 @@ elif check_button:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
-    <p>🛠️ تم تطوير هذه الأداة لمساعدتك في فحص حسابات Reddit بسهولة وسرعة</p>
-    <p>💻 مطور بتقنية Streamlit | 🔒 آمن وسريع</p>
+    <p>🛠️ تم تطوير هذه الأداة لفحص حسابات Reddit بدقة</p>
+    <p>💻 مطور باستخدام Streamlit | 🔒 سريع وآمن</p>
 </div>
 """, unsafe_allow_html=True)
