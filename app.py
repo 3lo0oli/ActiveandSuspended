@@ -3,15 +3,20 @@ import httpx
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from mistralai import Mistral
 
-st.set_page_config(page_title="Social Media Status Checker", page_icon="🔍", layout="wide")
+st.set_page_config(page_title="Social Media Status Checker AI", page_icon="🔍", layout="wide")
 
-st.title("🔍 فحص حالة حسابات السوشيال ميديا")
+st.title("🔍 فحص حالة حسابات السوشيال ميديا - AI Powered")
 st.markdown("""
 <div style='background-color:#e6f2ff;padding:15px;border-radius:10px;margin-bottom:20px'>
-افحص حالة حسابات Twitter, Facebook, Instagram, TikTok, YouTube
+افحص حالة حسابات Twitter, Facebook, Instagram, TikTok, YouTube بذكاء اصطناعي
 </div>
 """, unsafe_allow_html=True)
+
+# ==================== إعدادات Mistral AI ====================
+MISTRAL_API_KEY = "W1orVB6xgdmK35su8wU4v3yU7c7TwbGa"
+mistral_client = Mistral(api_key=MISTRAL_API_KEY)
 
 # ==================== User Agents ====================
 USER_AGENTS = [
@@ -83,219 +88,107 @@ def get_headers():
         "Accept-Encoding": "gzip, deflate, br",
         "DNT": "1",
         "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none"
+        "Upgrade-Insecure-Requests": "1"
     }
+
+# ==================== دالة Mistral AI للتحليل ====================
+
+def analyze_with_mistral(page_content, platform, username):
+    """تحليل محتوى الصفحة باستخدام Mistral AI"""
+    
+    # قص المحتوى لتجنب تجاوز حد الـ tokens
+    content_sample = page_content[:3000] if len(page_content) > 3000 else page_content
+    
+    prompt = f"""أنت خبير في تحليل صفحات السوشيال ميديا.
+
+المنصة: {platform}
+اسم المستخدم: {username}
+
+محتوى الصفحة:
+{content_sample}
+
+حدد حالة الحساب بدقة:
+- إذا كان الحساب موقوف/محظور/suspended، أجب فقط: SUSPENDED
+- إذا كان الحساب غير موجود/محذوف/not found، أجب فقط: NOT_FOUND
+- إذا كان الحساب نشط وموجود، أجب فقط: ACTIVE
+- إذا لم تستطع التأكد، أجب فقط: UNCLEAR
+
+أجب بكلمة واحدة فقط من الخيارات السابقة."""
+
+    try:
+        response = mistral_client.chat.complete(
+            model="mistral-large-latest",
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        )
+        
+        result = response.choices[0].message.content.strip().upper()
+        
+        # تحويل النتيجة لرموز
+        status_map = {
+            "ACTIVE": "✅ نشط",
+            "SUSPENDED": "🚫 موقوف",
+            "NOT_FOUND": "❌ غير موجود",
+            "UNCLEAR": "⚠️ غير واضح"
+        }
+        
+        return status_map.get(result, "⚠️ غير واضح")
+        
+    except Exception as e:
+        return "❓ خطأ في التحليل"
 
 # ==================== دوال الفحص ====================
 
-def check_twitter(username):
-    """فحص حساب Twitter/X"""
-    urls_to_try = [
-        f"https://twitter.com/{username}",
-        f"https://x.com/{username}"
-    ]
+def check_account_with_ai(username, platform):
+    """فحص الحساب باستخدام httpx + Mistral AI"""
+    
+    # بناء الرابط حسب المنصة
+    if platform == 'twitter':
+        urls_to_try = [
+            f"https://twitter.com/{username}",
+            f"https://x.com/{username}"
+        ]
+    elif platform == 'facebook':
+        urls_to_try = [f"https://www.facebook.com/{username}"]
+    elif platform == 'instagram':
+        urls_to_try = [f"https://www.instagram.com/{username}/"]
+    elif platform == 'tiktok':
+        urls_to_try = [f"https://www.tiktok.com/@{username}"]
+    elif platform == 'youtube':
+        urls_to_try = [
+            f"https://www.youtube.com/@{username}",
+            f"https://www.youtube.com/c/{username}",
+            f"https://www.youtube.com/user/{username}"
+        ]
+    else:
+        return "❓ منصة غير مدعومة", ""
     
     for url in urls_to_try:
         try:
             with httpx.Client(timeout=20, follow_redirects=True) as client:
                 response = client.get(url, headers=get_headers())
                 
+                # فحص أولي بسيط
                 if response.status_code == 404:
                     continue
                 
-                content = response.text.lower()
+                # تحليل المحتوى باستخدام Mistral
+                status = analyze_with_mistral(response.text, platform, username)
                 
-                # موقوف
-                if "account suspended" in content or '"suspended":true' in content:
-                    return "🚫 موقوف", url
-                
-                # غير موجود
-                if "this account doesn't exist" in content or "page does not exist" in content:
+                # إذا كانت النتيجة واضحة، نرجع النتيجة
+                if status != "⚠️ غير واضح":
+                    return status, url
+                    
+                # إذا كانت غير واضحة وفي أول URL، نجرب التالي
+                if status == "⚠️ غير واضح" and url != urls_to_try[-1]:
                     continue
+                    
+                return status, url
                 
-                # نشط - البحث عن علامات JSON
-                if any(x in content for x in [
-                    '"screen_name"',
-                    '"followers_count"', 
-                    '"following_count"',
-                    'data-testid="primarycolumn"',
-                    'followers',
-                    'following'
-                ]):
-                    return "✅ نشط", url
-                
-                # فحص بناءً على حجم الصفحة
-                if response.status_code == 200 and len(content) > 30000:
-                    # صفحة كبيرة عادةً تعني بروفايل موجود
-                    if 'twitter' in content or 'profile' in content:
-                        return "✅ نشط", url
-                        
-        except Exception as e:
-            continue
-    
-    return "❌ غير موجود", urls_to_try[0]
-
-def check_facebook(username):
-    """فحص صفحة/حساب Facebook"""
-    url = f"https://www.facebook.com/{username}"
-    
-    try:
-        with httpx.Client(timeout=20, follow_redirects=True) as client:
-            response = client.get(url, headers=get_headers())
-            
-            content = response.text.lower()
-            
-            # محذوف/معلق
-            if any(x in content for x in [
-                "content isn't available",
-                "page isn't available",
-                "content not found",
-                "page not found"
-            ]):
-                if response.status_code == 404:
-                    return "❌ غير موجود", url
-                return "🚫 معلق/محذوف", url
-            
-            # نشط
-            if response.status_code == 200:
-                if any(x in content for x in [
-                    "timeline", "photos", "about", 
-                    "log in", "sign up", "create new account"
-                ]):
-                    return "✅ نشط", url
-            
-            # إذا الصفحة كبيرة = غالباً نشطة
-            if len(content) > 10000:
-                return "✅ نشط", url
-            
-            return "⚠️ غير واضح", url
-            
-    except Exception as e:
-        return "❓ خطأ في الاتصال", url
-
-def check_instagram(username):
-    """فحص حساب Instagram"""
-    url = f"https://www.instagram.com/{username}/"
-    
-    try:
-        with httpx.Client(timeout=20, follow_redirects=True) as client:
-            response = client.get(url, headers=get_headers())
-            
-            content = response.text.lower()
-            
-            # غير موجود
-            if response.status_code == 404:
-                return "❌ غير موجود", url
-            
-            if "sorry, this page isn't available" in content:
-                return "❌ غير موجود", url
-            
-            # نشط - البحث عن JSON data
-            if any(x in content for x in [
-                '"is_private"',
-                '"edge_followed_by"',
-                '"edge_follow"',
-                '"profile_pic_url"',
-                'followers',
-                'following',
-                'posts'
-            ]):
-                return "✅ نشط", url
-            
-            # فحص og:description
-            if 'og:description' in content:
-                return "✅ نشط", url
-            
-            # صفحة كبيرة = حساب موجود
-            if response.status_code == 200 and len(content) > 15000:
-                return "✅ نشط", url
-            
-            return "⚠️ غير واضح", url
-            
-    except Exception as e:
-        return "❓ خطأ في الاتصال", url
-
-def check_tiktok(username):
-    """فحص حساب TikTok"""
-    url = f"https://www.tiktok.com/@{username}"
-    
-    try:
-        with httpx.Client(timeout=20, follow_redirects=True) as client:
-            response = client.get(url, headers=get_headers())
-            
-            content = response.text.lower()
-            
-            # غير موجود
-            if response.status_code == 404:
-                return "❌ غير موجود", url
-            
-            if any(x in content for x in [
-                "couldn't find this account",
-                "user not found",
-                "page not available"
-            ]):
-                return "❌ غير موجود", url
-            
-            # محظور
-            if "banned" in content or "account banned" in content:
-                return "🚫 محظور", url
-            
-            # نشط
-            if any(x in content for x in [
-                '"followercount"',
-                '"videocount"',
-                '"uniqueid"',
-                'followers',
-                'following',
-                'likes'
-            ]):
-                return "✅ نشط", url
-            
-            if response.status_code == 200 and len(content) > 10000:
-                return "✅ نشط", url
-            
-            return "⚠️ غير واضح", url
-            
-    except Exception as e:
-        return "❓ خطأ في الاتصال", url
-
-def check_youtube(username):
-    """فحص قناة YouTube"""
-    urls_to_try = [
-        f"https://www.youtube.com/@{username}",
-        f"https://www.youtube.com/c/{username}",
-        f"https://www.youtube.com/user/{username}",
-    ]
-    
-    for url in urls_to_try:
-        try:
-            with httpx.Client(timeout=20, follow_redirects=True) as client:
-                response = client.get(url, headers=get_headers())
-                
-                if response.status_code == 404:
-                    continue
-                
-                content = response.text.lower()
-                
-                if "this channel doesn't exist" in content:
-                    continue
-                
-                # نشط
-                if any(x in content for x in [
-                    '"subscribercount"',
-                    '"videoscount"',
-                    '"channelid"',
-                    'subscribers',
-                    'videos'
-                ]):
-                    return "✅ نشط", url
-                
-                if response.status_code == 200 and len(content) > 50000:
-                    return "✅ نشط", url
-                        
         except Exception as e:
             continue
     
@@ -315,15 +208,7 @@ def check_account(url):
     if not username:
         return url, "❓ رابط غير صحيح", url, platform
     
-    checkers = {
-        'twitter': lambda: check_twitter(username),
-        'facebook': lambda: check_facebook(username),
-        'instagram': lambda: check_instagram(username),
-        'tiktok': lambda: check_tiktok(username),
-        'youtube': lambda: check_youtube(username)
-    }
-    
-    status, final_url = checkers[platform]()
+    status, final_url = check_account_with_ai(username, platform)
     
     return url, status, final_url, platform
 
@@ -340,6 +225,9 @@ platform_icons = {
 
 st.subheader("📝 أدخل الروابط (حتى 10 روابط)")
 
+# عرض معلومات عن استخدام AI
+st.info("🤖 يستخدم هذا التطبيق الذكاء الاصطناعي (Mistral AI) لتحليل دقيق لحالة الحسابات")
+
 with st.expander("💡 أمثلة للاختبار"):
     st.code("""https://twitter.com/elonmusk
 https://facebook.com/zuck
@@ -355,7 +243,7 @@ urls_input = st.text_area(
 
 col1, col2 = st.columns([1, 1])
 with col1:
-    check_button = st.button("🔍 فحص الكل", type="primary", use_container_width=True)
+    check_button = st.button("🔍 فحص الكل بالذكاء الاصطناعي", type="primary", use_container_width=True)
 with col2:
     clear_button = st.button("🗑️ مسح", use_container_width=True)
 
@@ -377,19 +265,19 @@ if check_button and urls_input.strip():
     
     results = []
     
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = [executor.submit(check_account, url) for url in urls]
+    # فحص متسلسل (بدون threading) لتجنب مشاكل API rate limits
+    for i, url in enumerate(urls):
+        status_text.text(f"🤖 جارٍ التحليل بالذكاء الاصطناعي... {i+1}/{len(urls)}")
         
-        for i, future in enumerate(futures):
-            result = future.result()
-            results.append(result)
-            
-            progress = (i + 1) / len(urls)
-            progress_bar.progress(progress)
-            status_text.text(f"جارٍ الفحص... {i+1}/{len(urls)}")
-            
-            if i < len(futures) - 1:
-                time.sleep(0.5)
+        result = check_account(url)
+        results.append(result)
+        
+        progress = (i + 1) / len(urls)
+        progress_bar.progress(progress)
+        
+        # delay بسيط بين كل request
+        if i < len(urls) - 1:
+            time.sleep(1)
     
     progress_bar.empty()
     status_text.empty()
@@ -405,11 +293,11 @@ if check_button and urls_input.strip():
         
         with col2:
             if status.startswith("✅"):
-                st.success(status)
+                st.success(status + " 🤖")
             elif status.startswith("🚫") or status.startswith("❌"):
-                st.error(status)
+                st.error(status + " 🤖")
             elif status.startswith("⚠️"):
-                st.warning(status)
+                st.warning(status + " 🤖")
             else:
                 st.info(status)
         
@@ -438,14 +326,15 @@ elif check_button:
 
 st.markdown("---")
 st.markdown("""
-### 💡 نصائح:
+### 🤖 مميزات الذكاء الاصطناعي:
 
-✅ استخدم الروابط الكاملة للحسابات  
-✅ النتائج "غير واضح" = يحتاج تسجيل دخول للتأكد  
-✅ لا تفحص بسرعة كبيرة (قد تُحظر مؤقتاً)  
+✅ تحليل ذكي لمحتوى الصفحات  
+✅ دقة أعلى من Pattern Matching العادي  
+✅ يفهم السياق والمحتوى  
+✅ يتكيف مع التغييرات في واجهات المواقع  
 
 ### 📌 المنصات المدعومة:
 🐦 **Twitter/X** | 📘 **Facebook** | 📸 **Instagram** | 🎵 **TikTok** | 📺 **YouTube**
 """)
 
-st.caption("🔧 تم التطوير باستخدام Streamlit + httpx")
+st.caption("🔧 تم التطوير باستخدام Streamlit + httpx + Mistral AI")
