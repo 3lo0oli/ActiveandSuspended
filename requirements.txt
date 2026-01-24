@@ -1,5 +1,1 @@
-streamlit
-httpx
-beautifulsoup4
-pip install streamlit undetected-chromedriver selenium
-streamlit run app.py
+pip install streamlit httpx
