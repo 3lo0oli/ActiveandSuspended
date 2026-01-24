@@ -2,7 +2,6 @@ import streamlit as st
 import httpx
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
 from mistralai import Mistral
 
 st.set_page_config(page_title="Social Media Status Checker AI", page_icon="🔍", layout="wide")
@@ -22,7 +21,6 @@ mistral_client = Mistral(api_key=MISTRAL_API_KEY)
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
 ]
 
 # ==================== دوال مساعدة ====================
@@ -85,35 +83,38 @@ def get_headers():
         "User-Agent": random.choice(USER_AGENTS),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
         "DNT": "1",
         "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1"
     }
 
 # ==================== دالة Mistral AI للتحليل ====================
 
-def analyze_with_mistral(page_content, platform, username):
-    """تحليل محتوى الصفحة باستخدام Mistral AI"""
+def analyze_with_mistral(page_content, username, platform):
+    """تحليل محتوى الصفحة باستخدام Mistral AI - منطق بسيط"""
     
-    # قص المحتوى لتجنب تجاوز حد الـ tokens
-    content_sample = page_content[:3000] if len(page_content) > 3000 else page_content
+    # قص المحتوى 
+    content_sample = page_content[:4000] if len(page_content) > 4000 else page_content
     
-    prompt = f"""أنت خبير في تحليل صفحات السوشيال ميديا.
+    prompt = f"""أنت محلل صفحات ويب. مهمتك بسيطة جداً:
 
+اسم المستخدم المطلوب: {username}
 المنصة: {platform}
-اسم المستخدم: {username}
 
 محتوى الصفحة:
+---
 {content_sample}
+---
 
-حدد حالة الحساب بدقة:
-- إذا كان الحساب موقوف/محظور/suspended، أجب فقط: SUSPENDED
-- إذا كان الحساب غير موجود/محذوف/not found، أجب فقط: NOT_FOUND
-- إذا كان الحساب نشط وموجود، أجب فقط: ACTIVE
-- إذا لم تستطع التأكد، أجب فقط: UNCLEAR
+السؤال البسيط:
+هل اسم المستخدم "{username}" موجود وظاهر في هذه الصفحة؟
 
-أجب بكلمة واحدة فقط من الخيارات السابقة."""
+القواعد:
+1. إذا وجدت اسم المستخدم ظاهر في الصفحة (في أي مكان) = أجب: ACTIVE
+2. إذا الصفحة تقول "suspended" أو "موقوف" أو "banned" = أجب: SUSPENDED
+3. إذا الصفحة تقول "not found" أو "doesn't exist" أو "page not available" = أجب: NOT_FOUND
+4. في أي حالة أخرى = أجب: NOT_FOUND
+
+أجب بكلمة واحدة فقط: ACTIVE أو SUSPENDED أو NOT_FOUND"""
 
     try:
         response = mistral_client.chat.complete(
@@ -123,20 +124,19 @@ def analyze_with_mistral(page_content, platform, username):
                     "role": "user",
                     "content": prompt
                 }
-            ]
+            ],
+            temperature=0.1  # دقة أعلى
         )
         
         result = response.choices[0].message.content.strip().upper()
         
-        # تحويل النتيجة لرموز
-        status_map = {
-            "ACTIVE": "✅ نشط",
-            "SUSPENDED": "🚫 موقوف",
-            "NOT_FOUND": "❌ غير موجود",
-            "UNCLEAR": "⚠️ غير واضح"
-        }
-        
-        return status_map.get(result, "⚠️ غير واضح")
+        # تحويل النتيجة
+        if "ACTIVE" in result:
+            return "✅ نشط"
+        elif "SUSPENDED" in result:
+            return "🚫 موقوف"
+        else:
+            return "❌ معطل"
         
     except Exception as e:
         return "❓ خطأ في التحليل"
@@ -172,19 +172,19 @@ def check_account_with_ai(username, platform):
             with httpx.Client(timeout=20, follow_redirects=True) as client:
                 response = client.get(url, headers=get_headers())
                 
-                # فحص أولي بسيط
+                # فحص سريع
                 if response.status_code == 404:
                     continue
                 
                 # تحليل المحتوى باستخدام Mistral
-                status = analyze_with_mistral(response.text, platform, username)
+                status = analyze_with_mistral(response.text, username, platform)
                 
-                # إذا كانت النتيجة واضحة، نرجع النتيجة
-                if status != "⚠️ غير واضح":
+                # إذا النتيجة نشط، نرجع مباشرة
+                if status == "✅ نشط":
                     return status, url
                     
-                # إذا كانت غير واضحة وفي أول URL، نجرب التالي
-                if status == "⚠️ غير واضح" and url != urls_to_try[-1]:
+                # إذا مش نشط ولسه في URLs تانية، نجرب
+                if url != urls_to_try[-1]:
                     continue
                     
                 return status, url
@@ -192,7 +192,7 @@ def check_account_with_ai(username, platform):
         except Exception as e:
             continue
     
-    return "❌ غير موجود", urls_to_try[0]
+    return "❌ معطل", urls_to_try[0]
 
 # ==================== دالة الفحص الرئيسية ====================
 
@@ -225,8 +225,7 @@ platform_icons = {
 
 st.subheader("📝 أدخل الروابط (حتى 10 روابط)")
 
-# عرض معلومات عن استخدام AI
-st.info("🤖 يستخدم هذا التطبيق الذكاء الاصطناعي (Mistral AI) لتحليل دقيق لحالة الحسابات")
+st.info("🤖 منطق بسيط: إذا Username ظاهر = نشط | مش ظاهر = معطل")
 
 with st.expander("💡 أمثلة للاختبار"):
     st.code("""https://twitter.com/elonmusk
@@ -238,12 +237,12 @@ https://youtube.com/@MrBeast""")
 urls_input = st.text_area(
     "ضع كل رابط في سطر منفصل:",
     height=250,
-    placeholder="https://twitter.com/username\nhttps://facebook.com/pagename\nhttps://instagram.com/username\nhttps://tiktok.com/@username\nhttps://youtube.com/@channelname"
+    placeholder="https://twitter.com/username\nhttps://facebook.com/pagename\nhttps://instagram.com/username"
 )
 
 col1, col2 = st.columns([1, 1])
 with col1:
-    check_button = st.button("🔍 فحص الكل بالذكاء الاصطناعي", type="primary", use_container_width=True)
+    check_button = st.button("🔍 فحص الكل", type="primary", use_container_width=True)
 with col2:
     clear_button = st.button("🗑️ مسح", use_container_width=True)
 
@@ -254,7 +253,7 @@ if check_button and urls_input.strip():
     urls = [url.strip() for url in urls_input.strip().split('\n') if url.strip()]
     
     if len(urls) > 10:
-        st.warning("⚠️ الحد الأقصى 10 روابط. سيتم فحص أول 10 فقط.")
+        st.warning("⚠️ الحد الأقصى 10 روابط.")
         urls = urls[:10]
     
     st.markdown("---")
@@ -265,9 +264,9 @@ if check_button and urls_input.strip():
     
     results = []
     
-    # فحص متسلسل (بدون threading) لتجنب مشاكل API rate limits
+    # فحص متسلسل
     for i, url in enumerate(urls):
-        status_text.text(f"🤖 جارٍ التحليل بالذكاء الاصطناعي... {i+1}/{len(urls)}")
+        status_text.text(f"🤖 جارٍ التحليل... {i+1}/{len(urls)}")
         
         result = check_account(url)
         results.append(result)
@@ -275,7 +274,6 @@ if check_button and urls_input.strip():
         progress = (i + 1) / len(urls)
         progress_bar.progress(progress)
         
-        # delay بسيط بين كل request
         if i < len(urls) - 1:
             time.sleep(1)
     
@@ -293,11 +291,11 @@ if check_button and urls_input.strip():
         
         with col2:
             if status.startswith("✅"):
-                st.success(status + " 🤖")
-            elif status.startswith("🚫") or status.startswith("❌"):
-                st.error(status + " 🤖")
-            elif status.startswith("⚠️"):
-                st.warning(status + " 🤖")
+                st.success(status)
+            elif status.startswith("🚫"):
+                st.error(status)
+            elif status.startswith("❌"):
+                st.error(status)
             else:
                 st.info(status)
         
@@ -308,16 +306,16 @@ if check_button and urls_input.strip():
     
     # ملخص
     active = sum(1 for _, status, _, _ in results if "✅" in status)
-    suspended = sum(1 for _, status, _, _ in results if "🚫" in status or "❌" in status)
-    unclear = sum(1 for _, status, _, _ in results if "⚠️" in status or "❓" in status)
+    suspended = sum(1 for _, status, _, _ in results if "🚫" in status)
+    disabled = sum(1 for _, status, _, _ in results if "❌" in status)
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("✅ نشطة", active)
     with col2:
-        st.metric("🚫 معلقة/محذوفة", suspended)
+        st.metric("🚫 موقوفة", suspended)
     with col3:
-        st.metric("⚠️ غير واضح", unclear)
+        st.metric("❌ معطلة", disabled)
     with col4:
         st.metric("📊 المجموع", len(results))
 
@@ -326,15 +324,14 @@ elif check_button:
 
 st.markdown("---")
 st.markdown("""
-### 🤖 مميزات الذكاء الاصطناعي:
+### 🎯 المنطق البسيط:
 
-✅ تحليل ذكي لمحتوى الصفحات  
-✅ دقة أعلى من Pattern Matching العادي  
-✅ يفهم السياق والمحتوى  
-✅ يتكيف مع التغييرات في واجهات المواقع  
+✅ **نشط** = Username ظاهر في الصفحة  
+🚫 **موقوف** = الصفحة تقول suspended/banned  
+❌ **معطل** = Username مش موجود في الصفحة  
 
 ### 📌 المنصات المدعومة:
 🐦 **Twitter/X** | 📘 **Facebook** | 📸 **Instagram** | 🎵 **TikTok** | 📺 **YouTube**
 """)
 
-st.caption("🔧 تم التطوير باستخدام Streamlit + httpx + Mistral AI")
+st.caption("🔧 Streamlit + httpx + Mistral AI | منطق بسيط ودقيق")
