@@ -20,7 +20,6 @@ st.set_page_config(page_title="TikTok Status Checker", page_icon="🎵", layout=
 def set_bg_image(image_path: str = "bg.png"):
     p = Path(image_path)
     if not p.exists():
-        # If not found, just set dark bg
         st.markdown("""
         <style>
           .stApp { background: radial-gradient(circle at 20% 10%, #111827 0%, #0b1220 55%, #060b14 100%); }
@@ -33,7 +32,7 @@ def set_bg_image(image_path: str = "bg.png"):
     <style>
       .stApp {{
         background:
-          linear-gradient(rgba(6,11,20,.92), rgba(6,11,20,.92)),
+          linear-gradient(rgba(6,11,20,.93), rgba(6,11,20,.93)),
           url("data:image/png;base64,{b64}");
         background-size: cover;
         background-repeat: no-repeat;
@@ -46,7 +45,7 @@ def set_bg_image(image_path: str = "bg.png"):
 set_bg_image("bg.png")
 
 # =========================
-# CSS (dark theme + clean sections)
+# CSS
 # =========================
 st.markdown("""
 <style>
@@ -57,32 +56,36 @@ header {visibility: hidden;}
 .block-container {padding-top: 22px; max-width: 980px;}
 
 .hero{
-  background: rgba(10, 16, 30, .82);
+  background: rgba(10, 16, 30, .78);
   border: 1px solid rgba(255,255,255,.10);
   border-radius: 18px;
-  padding: 22px 18px;
+  padding: 24px 18px;
   text-align: center;
   box-shadow: 0 10px 30px rgba(0,0,0,.35);
   backdrop-filter: blur(8px);
 }
-.hero .logo{
-  width: 52px; height: 52px; border-radius: 14px;
-  display:flex; align-items:center; justify-content:center;
-  margin: 0 auto 10px auto;
-  background: rgba(255,255,255,.08);
-  border: 1px solid rgba(255,255,255,.12);
-  font-size: 26px;
-}
-.hero h1{
+
+.big-title{
   margin: 0;
   color: #fff;
-  font-size: 26px;
+  font-size: 44px;   /* كبرت TikTok */
   font-weight: 900;
+  letter-spacing: .6px;
 }
-.hero p{
-  margin: 8px 0 0 0;
-  color: rgba(255,255,255,.75);
-  font-size: 13px;
+
+/* remove logo rectangle, keep only icon */
+.hero .logo{
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 10px auto;
+  font-size: 30px;
+  color: #fff;
 }
 
 .section{
@@ -116,35 +119,62 @@ header {visibility: hidden;}
   font-size: 12px;
 }
 
-.metrics-wrap{
-  background: rgba(255,255,255,.06);
-  border: 1px solid rgba(255,255,255,.10);
-  border-radius: 14px;
-  padding: 10px 12px;
+/* metrics row (light text) */
+.metrics-row{
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
 }
 
-.dataframe-wrap{
+.metric-card{
   background: rgba(255,255,255,.06);
-  border: 1px solid rgba(255,255,255,.10);
+  border: 1px solid rgba(255,255,255,.12);
   border-radius: 14px;
-  padding: 12px;
+  padding: 10px 10px;
+  text-align: center;
+}
+
+.metric-label{
+  color: rgba(255,255,255,.85);
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+
+.metric-value{
+  color: #ffffff;           /* أرقام فاتحة */
+  font-size: 22px;
+  font-weight: 900;
+}
+
+/* dataframe wrap */
+.dataframe-wrap{
+  margin-top: 12px;
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 14px;
+  padding: 10px;
+}
+
+/* make dataframe header readable on dark */
+div[data-testid="stDataFrame"] *{
+  color: #e5e7eb !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# Header
+# Header (NO subtitle)
 # =========================
 st.markdown("""
 <div class="hero">
   <div class="logo">🎵</div>
-  <h1>TikTok</h1>
-  <p>افحص حالة الحسابات من الروابط — بدون API Keys</p>
+  <h1 class="big-title">TikTok</h1>
 </div>
 """, unsafe_allow_html=True)
 
 # =========================
-# TikTok checker (free)
+# TikTok checker logic (free)
 # =========================
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -196,7 +226,7 @@ def check_tiktok(username: str) -> dict:
     clean = username.lstrip("@").strip()
     profile_url = f"https://www.tiktok.com/@{clean}"
 
-    # 1) oEmbed (strong signal)
+    # 1) oEmbed
     oembed_url = f"https://www.tiktok.com/oembed?url={profile_url}"
     r = safe_get(oembed_url, timeout=12)
 
@@ -212,7 +242,7 @@ def check_tiktok(username: str) -> dict:
     if r.status_code in (403, 429):
         return {"Username": clean, "Status": "Blocked", "Confidence": 75, "Link": profile_url}
 
-    # 2) page fallback
+    # 2) profile fallback
     r2 = safe_get(profile_url, timeout=18)
     if r2 is None:
         return {"Username": clean, "Status": "Error", "Confidence": 60, "Link": profile_url}
@@ -235,7 +265,6 @@ def check_tiktok(username: str) -> dict:
         '"statuscode":10202',
     ]
 
-    # IMPORTANT: prefer Not Found if its signals appear
     if code == 404 or any(s in text for s in not_found_signals):
         return {"Username": clean, "Status": "Not Found", "Confidence": 92, "Link": profile_url}
 
@@ -252,13 +281,13 @@ def check_tiktok(username: str) -> dict:
     return {"Username": clean, "Status": "Unknown", "Confidence": 65, "Link": profile_url}
 
 # =========================
-# Input section (NO extra text lines)
+# Input section (no extra titles)
 # =========================
 st.markdown('<div class="section">', unsafe_allow_html=True)
 
 urls_input = st.text_area(
     label="",
-    height=160,
+    height=150,
     placeholder="ضع روابط TikTok هنا (كل رابط في سطر)",
 )
 
@@ -295,7 +324,6 @@ if run:
         st.stop()
 
     links = [normalize_url(u) for u in raw]
-    # keep tiktok only (soft)
     links = [u for u in links if "tiktok.com" in u.lower()]
 
     if not links:
@@ -326,7 +354,6 @@ if run:
 
     df = pd.DataFrame(results)
 
-    # counts
     active = int((df["Status"] == "Active").sum())
     banned = int((df["Status"] == "Banned").sum())
     not_found = int((df["Status"] == "Not Found").sum())
@@ -335,17 +362,20 @@ if run:
     total = len(df)
 
     st.markdown('<div class="section">', unsafe_allow_html=True)
-    st.markdown('<div class="metrics-wrap">', unsafe_allow_html=True)
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
-    m1.metric("✅ Active", active)
-    m2.metric("🚫 Banned", banned)
-    m3.metric("❌ Not Found", not_found)
-    m4.metric("⚠️ Blocked", blocked)
-    m5.metric("❓ Unknown", unknown)
-    m6.metric("📦 Total", total)
-    st.markdown('</div>', unsafe_allow_html=True)
 
-    # table: Username | Status | Link
+    # metrics in custom light style
+    st.markdown(f"""
+      <div class="metrics-row">
+        <div class="metric-card"><div class="metric-label">✅ Active</div><div class="metric-value">{active}</div></div>
+        <div class="metric-card"><div class="metric-label">🚫 Banned</div><div class="metric-value">{banned}</div></div>
+        <div class="metric-card"><div class="metric-label">❌ Not Found</div><div class="metric-value">{not_found}</div></div>
+        <div class="metric-card"><div class="metric-label">⚠️ Blocked</div><div class="metric-value">{blocked}</div></div>
+        <div class="metric-card"><div class="metric-label">❓ Unknown</div><div class="metric-value">{unknown}</div></div>
+        <div class="metric-card"><div class="metric-label">📦 Total</div><div class="metric-value">{total}</div></div>
+      </div>
+    """, unsafe_allow_html=True)
+
+    # table
     st.markdown('<div class="dataframe-wrap">', unsafe_allow_html=True)
     show_df = df[["Username", "Status", "Link"]].copy()
     st.dataframe(show_df, use_container_width=True, hide_index=True)
@@ -360,6 +390,7 @@ if run:
         mime="text/csv",
         use_container_width=True
     )
+
     st.markdown('</div>', unsafe_allow_html=True)
 
-st.caption("Streamlit + httpx · TikTok oEmbed + HTML fallback · Free (no API Keys)")
+st.caption(" ")
