@@ -3,515 +3,429 @@ import httpx
 import re
 import time
 import random
+from urllib.parse import urlparse, urlunparse
 
-st.set_page_config(page_title="Social Media Status Checker", page_icon="🔍", layout="wide")
+# =========================
+# Streamlit Page
+# =========================
+st.set_page_config(page_title="TikTok Status Checker", page_icon="🎵", layout="wide")
 
-# ==================== CSS ====================
 st.markdown("""
 <style>
     .main-header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 20px 30px;
-        border-radius: 15px;
-        margin-bottom: 25px;
+        background: linear-gradient(135deg, #111827 0%, #1f2937 100%);
+        padding: 18px 24px;
+        border-radius: 14px;
+        margin-bottom: 18px;
         color: white;
         text-align: center;
     }
-    .main-header h1 { color: white; margin: 0; font-size: 2em; }
-    .main-header p { color: #e8e8e8; margin: 5px 0 0 0; }
+    .main-header h1 { color: white; margin: 0; font-size: 1.8em; }
+    .main-header p { color: #d1d5db; margin: 6px 0 0 0; }
+
     .result-card {
-        background: #f8f9fa;
-        border-radius: 10px;
-        padding: 15px 20px;
-        margin: 8px 0;
-        border-left: 5px solid #ddd;
+        background: #f9fafb;
+        border-radius: 12px;
+        padding: 14px 18px;
+        margin: 10px 0;
+        border-left: 6px solid #e5e7eb;
     }
-    .result-active { border-left-color: #28a745; background: #f0fff4; }
-    .result-suspended { border-left-color: #dc3545; background: #fff5f5; }
-    .result-disabled { border-left-color: #6c757d; background: #f5f5f5; }
-    .result-error { border-left-color: #ffc107; background: #fffdf0; }
+    .ok { border-left-color: #22c55e; background: #f0fdf4; }
+    .bad { border-left-color: #ef4444; background: #fff1f2; }
+    .warn { border-left-color: #f59e0b; background: #fffbeb; }
+    .unk { border-left-color: #6b7280; background: #f3f4f6; }
+
+    .pill {
+        display:inline-block;
+        padding: 2px 10px;
+        border-radius: 999px;
+        background: #111827;
+        color: white;
+        font-size: 12px;
+        margin-left: 8px;
+    }
+    code { background: #e5e7eb; padding: 2px 6px; border-radius: 6px; }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="main-header">
-    <h1>🔍 Social Media Account Checker</h1>
-    <p>فحص حالة حسابات Twitter · Facebook · Instagram · TikTok · YouTube — مجاني 100%</p>
+    <h1>🎵 TikTok Account Status Checker</h1>
+    <p>يفحص الحسابات من اللينكات ويطلع Status + Confidence — بدون أي API Keys</p>
 </div>
 """, unsafe_allow_html=True)
 
-# ==================== User Agents ====================
+# =========================
+# User Agents
+# =========================
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
 ]
 
-# ==================== Helper Functions ====================
-
-def detect_platform(url: str) -> str | None:
-    url_lower = url.lower()
-    if "twitter.com" in url_lower or "x.com" in url_lower:
-        return "twitter"
-    if "facebook.com" in url_lower or "fb.com" in url_lower:
-        return "facebook"
-    if "instagram.com" in url_lower:
-        return "instagram"
-    if "tiktok.com" in url_lower:
-        return "tiktok"
-    if "youtube.com" in url_lower or "youtu.be" in url_lower:
-        return "youtube"
-    return None
-
-
-def extract_username(url: str, platform: str) -> str | None:
-    url = url.strip().rstrip("/")
-    patterns = {
-        "twitter":   r"(?:twitter\.com|x\.com)/([A-Za-z0-9_]+)",
-        "facebook":  r"facebook\.com/(?:profile\.php\?id=)?([A-Za-z0-9_.]+)",
-        "instagram": r"instagram\.com/([A-Za-z0-9_.]+)",
-        "tiktok":    r"tiktok\.com/@?([A-Za-z0-9_.]+)",
-    }
-    if platform == "youtube":
-        for pat in [r"/@([^/?#]+)", r"/c/([^/?#]+)", r"/user/([^/?#]+)", r"/channel/([^/?#]+)"]:
-            m = re.search(pat, url)
-            if m:
-                return m.group(1)
-        return None
-
-    pat = patterns.get(platform)
-    if pat:
-        m = re.search(pat, url)
-        return m.group(1) if m else None
-    return None
-
-
-def get_browser_headers() -> dict:
+def headers():
     return {
         "User-Agent": random.choice(USER_AGENTS),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "DNT": "1",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Cache-Control": "max-age=0",
-    }
-
-
-def get_mobile_headers() -> dict:
-    return {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
         "Connection": "keep-alive",
+        "DNT": "1",
+        "Upgrade-Insecure-Requests": "1",
     }
 
+# =========================
+# Helpers
+# =========================
+def normalize_url(url: str) -> str:
+    """
+    - force https
+    - remove query/fragment
+    - trim spaces
+    """
+    url = url.strip()
+    if not url:
+        return url
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    p = urlparse(url)
+    scheme = "https"
+    netloc = p.netloc.lower()
+    path = p.path.rstrip("/")
+    return urlunparse((scheme, netloc, path, "", "", ""))
 
-def make_request(url: str, headers: dict = None, timeout: int = 25) -> httpx.Response | None:
-    if headers is None:
-        headers = get_browser_headers()
+def is_tiktok_url(url: str) -> bool:
+    u = url.lower()
+    return "tiktok.com" in u
 
-    # Try 1: HTTP/2
-    for attempt in range(2):
-        try:
-            with httpx.Client(timeout=timeout, follow_redirects=True, http2=True, verify=True) as client:
-                return client.get(url, headers=headers)
-        except Exception:
-            if attempt == 0:
-                time.sleep(0.5)
-
-    # Try 2: HTTP/1.1 mobile
-    try:
-        with httpx.Client(timeout=timeout, follow_redirects=True, http2=False, verify=True) as client:
-            return client.get(url, headers=get_mobile_headers())
-    except Exception:
-        pass
-
-    # Try 3: Skip SSL (last resort)
-    try:
-        with httpx.Client(timeout=timeout, follow_redirects=True, http2=False, verify=False) as client:
-            return client.get(url, headers=get_mobile_headers())
-    except Exception:
-        pass
-
+def extract_tiktok_username(url: str) -> str | None:
+    """
+    Supports:
+    - https://www.tiktok.com/@username
+    - https://tiktok.com/@username
+    - https://www.tiktok.com/@username/video/...
+    """
+    url = normalize_url(url)
+    m = re.search(r"tiktok\.com/@([^/?#]+)", url, flags=re.IGNORECASE)
+    if m:
+        return m.group(1)
     return None
 
+def safe_get(url: str, timeout: int = 20) -> httpx.Response | None:
+    try:
+        with httpx.Client(
+            timeout=timeout,
+            follow_redirects=True,
+            http2=True,
+            verify=True
+        ) as client:
+            return client.get(url, headers=headers())
+    except Exception:
+        # retry once with http2 off
+        try:
+            with httpx.Client(
+                timeout=timeout,
+                follow_redirects=True,
+                http2=False,
+                verify=True
+            ) as client:
+                return client.get(url, headers=headers())
+        except Exception:
+            return None
 
-# ==================== Platform Checkers ====================
+# =========================
+# TikTok Checker (Status + Confidence)
+# =========================
+def check_tiktok(username: str) -> dict:
+    clean = username.lstrip("@").strip()
+    profile_url = f"https://www.tiktok.com/@{clean}"
 
-def check_twitter(username: str) -> tuple[str, str, str]:
-    url = f"https://x.com/{username}"
-    resp = make_request(url)
-    if resp is None:
-        return "⚠️ تعذر الاتصال", url, "لم نتمكن من الوصول — جرب تاني"
+    # ---- Step 1: oEmbed (free)
+    oembed_url = f"https://www.tiktok.com/oembed?url={profile_url}"
+    r = safe_get(oembed_url, timeout=15)
 
-    text = resp.text.lower()
-    code = resp.status_code
+    if r is None:
+        return {
+            "platform": "TikTok",
+            "username": clean,
+            "status": "⚠️ Connection Error",
+            "confidence": 65,
+            "link": profile_url,
+            "reason": "Could not reach oEmbed endpoint"
+        }
 
-    if any(s in text for s in ["account is suspended", "account has been suspended", "this account is suspended"]):
-        return "🚫 موقوف (Suspended)", url, "الحساب معلّق من تويتر"
+    if r.status_code == 200:
+        # account exists (very strong signal)
+        return {
+            "platform": "TikTok",
+            "username": clean,
+            "status": "✅ Active",
+            "confidence": 95,
+            "link": profile_url,
+            "reason": "Confirmed via oEmbed (HTTP 200)"
+        }
 
-    if code == 404 or any(s in text for s in [
-        "this account doesn't exist", "this account doesn\u2019t exist",
-        "hmm...this page doesn", "page doesn't exist",
-    ]):
-        return "❌ غير موجود", url, "الحساب مش موجود أو اتحذف"
+    if r.status_code == 404:
+        return {
+            "platform": "TikTok",
+            "username": clean,
+            "status": "❌ Not Found",
+            "confidence": 95,
+            "link": profile_url,
+            "reason": "oEmbed returned 404 (profile likely missing)"
+        }
+
+    if r.status_code in (403, 429):
+        # blocked / rate limited
+        return {
+            "platform": "TikTok",
+            "username": clean,
+            "status": "⚠️ Blocked / Rate limited",
+            "confidence": 75,
+            "link": profile_url,
+            "reason": f"oEmbed returned HTTP {r.status_code}"
+        }
+
+    # ---- Step 2: Direct page fallback
+    r2 = safe_get(profile_url, timeout=20)
+    if r2 is None:
+        return {
+            "platform": "TikTok",
+            "username": clean,
+            "status": "⚠️ Connection Error",
+            "confidence": 60,
+            "link": profile_url,
+            "reason": "Could not reach profile page"
+        }
+
+    text = (r2.text or "").lower()
+    code = r2.status_code
+
+    if code in (403, 429):
+        return {
+            "platform": "TikTok",
+            "username": clean,
+            "status": "⚠️ Blocked / Rate limited",
+            "confidence": 70,
+            "link": profile_url,
+            "reason": f"Profile returned HTTP {code}"
+        }
+
+    # keywords for banned
+    banned_keywords = [
+        "this account was banned",
+        "account banned",
+        "permanently banned",
+        "violated our community guidelines",
+    ]
+    if any(k in text for k in banned_keywords):
+        return {
+            "platform": "TikTok",
+            "username": clean,
+            "status": "🚫 Banned / Suspended",
+            "confidence": 95,
+            "link": profile_url,
+            "reason": "Ban keywords detected on page"
+        }
+
+    # not found signals
+    if code == 404 or '"statuscode":10202' in text or "couldn't find this account" in text or "couldn\u2019t find this account" in text:
+        return {
+            "platform": "TikTok",
+            "username": clean,
+            "status": "❌ Not Found",
+            "confidence": 92,
+            "link": profile_url,
+            "reason": "Not-found signals detected on page"
+        }
+
+    # active signals
+    strong_signals = [
+        f"@{clean.lower()}",
+        '"uniqueid"',
+        'property="og:title"',
+        'property="og:description"',
+    ]
+    if code == 200 and any(s in text for s in strong_signals):
+        return {
+            "platform": "TikTok",
+            "username": clean,
+            "status": "✅ Likely Active",
+            "confidence": 85,
+            "link": profile_url,
+            "reason": "Profile signals detected on page"
+        }
 
     if code == 200:
-        if any(s in text for s in [f"@{username.lower()}", f"/{username.lower()}", f'"{username.lower()}"']):
-            return "✅ نشط (Active)", url, "الحساب شغال"
-        return "✅ نشط — غالباً", url, "الصفحة موجودة (محتاجة متصفح للتأكيد)"
+        return {
+            "platform": "TikTok",
+            "username": clean,
+            "status": "❓ Unknown (200)",
+            "confidence": 70,
+            "link": profile_url,
+            "reason": "Page loaded but signals were weak (possible wall/AB test)"
+        }
 
-    return "❓ غير محدد", url, f"Status: {code}"
+    return {
+        "platform": "TikTok",
+        "username": clean,
+        "status": "❓ Unknown",
+        "confidence": 65,
+        "link": profile_url,
+        "reason": f"Unhandled HTTP {code}"
+    }
 
+# =========================
+# UI
+# =========================
+st.subheader("📝 أدخل روابط TikTok (كل رابط في سطر)")
 
-def check_facebook(username: str) -> tuple[str, str, str]:
-    is_numeric = username.isdigit()
-    page_url = f"https://www.facebook.com/profile.php?id={username}" if is_numeric else f"https://www.facebook.com/{username}"
-
-    # ===== Strategy 1: Graph API — profile picture endpoint (free, no key) =====
-    graph_url = f"https://graph.facebook.com/{username}/picture?redirect=false"
-    try:
-        resp = make_request(graph_url, timeout=15)
-        if resp is not None:
-            if resp.status_code == 200:
-                try:
-                    data = resp.json()
-                    pic_url = data.get("data", {}).get("url", "")
-                    if pic_url:
-                        return "✅ نشط (Active)", page_url, "الحساب موجود وشغال (Graph API)"
-                except Exception:
-                    pass
-
-            # Check for "profile doesn't exist" error
-            try:
-                err_data = resp.json()
-                err_msg = err_data.get("error", {}).get("message", "").lower()
-                if "does not exist" in err_msg:
-                    return "❌ غير موجود", page_url, "الحساب غير موجود"
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    # ===== Strategy 2: Mobile Facebook =====
-    m_url = f"https://m.facebook.com/profile.php?id={username}" if is_numeric else f"https://m.facebook.com/{username}"
-    resp = make_request(m_url, headers=get_mobile_headers())
-    if resp is not None:
-        text = resp.text.lower()
-        code = resp.status_code
-
-        not_found = [
-            "this content isn't available", "this content isn\u2019t available",
-            "this page isn't available", "this page isn\u2019t available",
-            "the link you followed may be broken", "page not found",
-            "the page you requested was not found",
-        ]
-        if code == 404 or any(s in text for s in not_found):
-            return "❌ غير موجود", page_url, "الصفحة مش موجودة أو اتحذفت"
-
-        if any(s in text for s in ["account has been disabled", "violated our community standards"]):
-            return "🚫 معطل (Disabled)", page_url, "الحساب اتعطّل لمخالفة القوانين"
-
-        if code == 200:
-            profile_signals = [
-                'property="og:title"', "profile_header", "timeline",
-                "cover_photo", "profile_photo",
-            ]
-            if not is_numeric:
-                profile_signals.append(f"/{username.lower()}")
-            else:
-                profile_signals.append(f"id={username}")
-
-            if any(s in text for s in profile_signals):
-                return "✅ نشط (Active)", page_url, "الحساب شغال وموجود"
-            return "✅ نشط — غالباً", page_url, "الصفحة موجودة (تحتاج متصفح للتأكيد 100%)"
-
-        if code in (301, 302):
-            return "✅ نشط — غالباً", page_url, "الحساب موجود (يحتاج تسجيل دخول)"
-
-    # ===== Strategy 3: Desktop =====
-    resp = make_request(page_url)
-    if resp is not None:
-        text = resp.text.lower()
-        if resp.status_code == 404 or any(s in text for s in [
-            "this content isn't available", "this page isn't available",
-            "the link you followed may be broken",
-        ]):
-            return "❌ غير موجود", page_url, "الصفحة مش موجودة"
-        if resp.status_code == 200:
-            return "✅ نشط — غالباً", page_url, "الصفحة استجابت — الحساب موجود غالباً"
-
-    return "⚠️ تعذر الاتصال", page_url, "لم نتمكن من الوصول — جرب مرة تانية"
-
-
-def check_instagram(username: str) -> tuple[str, str, str]:
-    url = f"https://www.instagram.com/{username}/"
-
-    resp = make_request(url)
-    if resp is not None:
-        text = resp.text.lower()
-        code = resp.status_code
-
-        if code == 404 or any(s in text for s in [
-            "sorry, this page isn't available", "sorry, this page isn\u2019t available",
-            "the link you followed may be broken",
-        ]):
-            return "❌ غير موجود", url, "الحساب مش موجود أو اتحذف"
-
-        if any(s in text for s in ["account has been suspended", "account suspended"]):
-            return "🚫 موقوف (Suspended)", url, "الحساب معلّق"
-
-        if code == 200:
-            if any(s in text for s in [
-                f'"{username.lower()}"', f"@{username.lower()}",
-                f"instagram.com/{username.lower()}", 'property="og:title"',
-                '"profilepage"', "profile_pic_url",
-            ]):
-                return "✅ نشط (Active)", url, "الحساب شغال وموجود"
-            return "✅ نشط — غالباً", url, "الصفحة موجودة (قد تحتاج تسجيل دخول)"
-
-        if code in (301, 302):
-            return "✅ نشط — غالباً", url, "الحساب موجود (يحتاج تسجيل دخول)"
-
-    # Mobile fallback
-    resp = make_request(url, headers=get_mobile_headers())
-    if resp is not None:
-        if resp.status_code == 404 or "page isn't available" in resp.text.lower():
-            return "❌ غير موجود", url, "الحساب غير موجود"
-        if resp.status_code == 200:
-            return "✅ نشط — غالباً", url, "الحساب موجود"
-
-    return "⚠️ تعذر الاتصال", url, "لم نتمكن من الوصول — جرب تاني"
-
-
-def check_tiktok(username: str) -> tuple[str, str, str]:
-    clean = username.lstrip("@")
-    url = f"https://www.tiktok.com/@{clean}"
-
-    # Strategy 1: oEmbed API (free, reliable)
-    oembed_url = f"https://www.tiktok.com/oembed?url={url}"
-    try:
-        resp = make_request(oembed_url, timeout=15)
-        if resp is not None and resp.status_code == 200:
-            try:
-                data = resp.json()
-                author = data.get("author_name", clean)
-                return "✅ نشط (Active)", url, f"الحساب شغال — الاسم: {author}"
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    # Strategy 2: Direct page
-    resp = make_request(url)
-    if resp is not None:
-        text = resp.text.lower()
-        code = resp.status_code
-
-        if any(s in text for s in ["this account was banned", "account banned", "permanently banned"]):
-            return "🚫 محظور (Banned)", url, "الحساب محظور من تيك توك"
-
-        if code == 404 or any(s in text for s in [
-            "couldn't find this account", "couldn\u2019t find this account",
-            '"statuscode":10202', '"statuscode": 10202',
-        ]):
-            return "❌ غير موجود", url, "الحساب مش موجود"
-
-        if code == 200:
-            if any(s in text for s in [
-                f"@{clean.lower()}", f'"uniqueid":"{clean.lower()}"',
-                'property="og:title"',
-            ]):
-                return "✅ نشط (Active)", url, "الحساب شغال"
-            return "✅ نشط — غالباً", url, "الصفحة موجودة"
-
-    return "⚠️ تعذر الاتصال", url, "لم نتمكن من الوصول"
-
-
-def check_youtube(username: str) -> tuple[str, str, str]:
-    url_formats = [
-        f"https://www.youtube.com/@{username}",
-        f"https://www.youtube.com/c/{username}",
-        f"https://www.youtube.com/user/{username}",
-    ]
-    if username.startswith("UC") and len(username) == 24:
-        url_formats = [f"https://www.youtube.com/channel/{username}"]
-
-    for page_url in url_formats:
-        oembed_url = f"https://www.youtube.com/oembed?url={page_url}&format=json"
-        resp = make_request(oembed_url, timeout=15)
-        if resp is not None and resp.status_code == 200:
-            try:
-                data = resp.json()
-                title = data.get("author_name", username)
-                return "✅ نشط (Active)", page_url, f"القناة شغالة — اسمها: {title}"
-            except Exception:
-                return "✅ نشط (Active)", page_url, "القناة موجودة"
-
-    direct_url = url_formats[0]
-    resp = make_request(direct_url)
-    if resp is not None:
-        text = resp.text.lower()
-        if "this account has been terminated" in text:
-            return "🚫 محذوف (Terminated)", direct_url, "القناة اتحذفت"
-        if "has been suspended" in text:
-            return "🚫 موقوف (Suspended)", direct_url, "القناة معلّقة"
-        if resp.status_code == 404:
-            return "❌ غير موجود", direct_url, "القناة مش موجودة"
-        if resp.status_code == 200:
-            return "✅ نشط — غالباً", direct_url, "القناة موجودة"
-
-    return "⚠️ تعذر الاتصال", direct_url, "لم نتمكن من التحقق"
-
-
-# ==================== Main ====================
-
-CHECKERS = {
-    "twitter": check_twitter, "facebook": check_facebook,
-    "instagram": check_instagram, "tiktok": check_tiktok, "youtube": check_youtube,
-}
-PLATFORM_ICONS = {
-    "twitter": "🐦", "facebook": "📘", "instagram": "📸",
-    "tiktok": "🎵", "youtube": "📺", "unknown": "❓",
-}
-PLATFORM_NAMES = {
-    "twitter": "Twitter / X", "facebook": "Facebook", "instagram": "Instagram",
-    "tiktok": "TikTok", "youtube": "YouTube",
-}
-
-
-def check_account(url: str) -> dict:
-    platform = detect_platform(url)
-    if not platform:
-        return {"url": url, "platform": "unknown", "status": "❓ منصة غير مدعومة",
-                "link": url, "details": "تأكد من الرابط", "username": "—"}
-    username = extract_username(url, platform)
-    if not username:
-        return {"url": url, "platform": platform, "status": "❓ رابط غير صحيح",
-                "link": url, "details": "لم نتمكن من استخراج اسم المستخدم", "username": "—"}
-    status, link, details = CHECKERS[platform](username)
-    return {"url": url, "platform": platform, "username": username,
-            "status": status, "link": link, "details": details}
-
-
-# ==================== UI ====================
-
-st.subheader("📝 أدخل الروابط (حتى 10 روابط)")
-st.info("💡 **مجاني 100%** — Graph API + oEmbed + HTTP Pattern Matching — بدون أي مفتاح مدفوع")
-
-with st.expander("📌 أمثلة للاختبار"):
-    st.code("""https://twitter.com/elonmusk
-https://www.facebook.com/zuck
-https://www.facebook.com/profile.php?id=61556090150113
-https://instagram.com/cristiano
-https://tiktok.com/@khaby.lame
-https://youtube.com/@MrBeast""")
+with st.expander("📌 أمثلة"):
+    st.code("""https://www.tiktok.com/@khaby.lame
+https://tiktok.com/@this_user_does_not_exist_123456789
+""")
 
 urls_input = st.text_area(
-    "ضع كل رابط في سطر منفصل:", height=220,
-    placeholder="https://www.facebook.com/username\nhttps://instagram.com/username",
+    "الروابط:",
+    height=220,
+    placeholder="https://www.tiktok.com/@username\nhttps://tiktok.com/@username"
 )
 
-col_btn1, col_btn2 = st.columns(2)
-with col_btn1:
-    check_button = st.button("🔍 فحص الكل", type="primary", use_container_width=True)
-with col_btn2:
-    clear_button = st.button("🗑️ مسح", use_container_width=True)
+c1, c2, c3 = st.columns([1, 1, 2])
+with c1:
+    max_urls = st.number_input("Max links", min_value=1, max_value=200, value=25, step=1)
+with c2:
+    delay = st.number_input("Delay بين كل فحص (ثواني)", min_value=0.0, max_value=5.0, value=0.6, step=0.1)
+with c3:
+    st.caption("💡 لو ظهر Blocked/Rate limited زوّد الـ Delay أو قلّل عدد اللينكات في الدفعة.")
 
-if clear_button:
+btn1, btn2 = st.columns(2)
+with btn1:
+    run = st.button("🎵 فحص TikTok", type="primary", use_container_width=True)
+with btn2:
+    clear = st.button("🗑️ مسح", use_container_width=True)
+
+if clear:
     st.rerun()
 
-if check_button and urls_input.strip():
-    urls = [u.strip() for u in urls_input.strip().splitlines() if u.strip()]
-    if len(urls) > 10:
-        st.warning("⚠️ الحد الأقصى 10 — هيتم فحص أول 10 فقط.")
-        urls = urls[:10]
+def render_card(item: dict):
+    status = item["status"]
+    conf = item["confidence"]
+    if status.startswith("✅"):
+        cls = "ok"
+    elif status.startswith("❌") or status.startswith("🚫"):
+        cls = "bad"
+    elif status.startswith("⚠️"):
+        cls = "warn"
+    else:
+        cls = "unk"
+
+    st.markdown(f"""
+    <div class="result-card {cls}">
+        <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+            <div>
+                <strong style="font-size:1.05em;">🎵 TikTok</strong>
+                <span class="pill">{conf}%</span>
+                &nbsp;·&nbsp;<code>@{item["username"]}</code>
+            </div>
+            <div style="font-size:1.05em; font-weight:700;">{status}</div>
+        </div>
+        <div style="margin-top:8px; color:#374151; font-size:0.92em;">
+            📝 {item["reason"]} &nbsp;&nbsp;·&nbsp;&nbsp;
+            <a href="{item["link"]}" target="_blank">🔗 Open</a>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+if run:
+    raw = [u.strip() for u in urls_input.splitlines() if u.strip()]
+    if not raw:
+        st.warning("⚠️ حط لينك واحد على الأقل.")
+        st.stop()
+
+    # normalize + filter tiktok only
+    cleaned = []
+    for u in raw:
+        u2 = normalize_url(u)
+        if is_tiktok_url(u2):
+            cleaned.append(u2)
+
+    if not cleaned:
+        st.error("❌ مفيش ولا لينك TikTok صحيح في اللي دخلتهم.")
+        st.stop()
+
+    if len(cleaned) > int(max_urls):
+        st.info(f"ℹ️ هفحص أول {int(max_urls)} لينك فقط.")
+        cleaned = cleaned[: int(max_urls)]
 
     st.markdown("---")
-    st.subheader(f"📊 النتائج ({len(urls)} حساب)")
+    st.subheader(f"📊 النتائج ({len(cleaned)} روابط)")
 
     progress = st.progress(0)
-    status_ph = st.empty()
-    results = []
+    ph = st.empty()
 
-    for i, url in enumerate(urls):
-        pname = PLATFORM_NAMES.get(detect_platform(url) or "", url)
-        status_ph.text(f"⏳ جارٍ فحص {pname} ... ({i+1}/{len(urls)})")
-        results.append(check_account(url))
-        progress.progress((i + 1) / len(urls))
-        if i < len(urls) - 1:
-            time.sleep(2)
+    results = []
+    for i, url in enumerate(cleaned):
+        ph.text(f"جارٍ فحص ({i+1}/{len(cleaned)}): {url}")
+        username = extract_tiktok_username(url)
+        if not username:
+            results.append({
+                "platform": "TikTok",
+                "username": "—",
+                "status": "❓ Invalid URL",
+                "confidence": 90,
+                "link": url,
+                "reason": "Could not extract username from URL"
+            })
+        else:
+            results.append(check_tiktok(username))
+
+        progress.progress((i + 1) / len(cleaned))
+        if i < len(cleaned) - 1 and delay > 0:
+            time.sleep(float(delay))
 
     progress.empty()
-    status_ph.empty()
+    ph.empty()
 
+    # summary metrics
+    active = sum(1 for r in results if r["status"].startswith("✅"))
+    banned = sum(1 for r in results if r["status"].startswith("🚫"))
+    not_found = sum(1 for r in results if r["status"].startswith("❌"))
+    blocked = sum(1 for r in results if r["status"].startswith("⚠️"))
+    unknown = len(results) - (active + banned + not_found + blocked)
+
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    m1.metric("✅ Active", active)
+    m2.metric("🚫 Banned", banned)
+    m3.metric("❌ Not Found", not_found)
+    m4.metric("⚠️ Blocked", blocked)
+    m5.metric("❓ Unknown", unknown)
+    m6.metric("📦 Total", len(results))
+
+    st.markdown("### 📄 التفاصيل")
     for r in results:
-        icon = PLATFORM_ICONS.get(r["platform"], "❓")
-        status = r["status"]
-        css = "result-active" if "✅" in status else "result-suspended" if "🚫" in status else "result-disabled" if "❌" in status else "result-error"
+        render_card(r)
 
-        st.markdown(f"""
-        <div class="result-card {css}">
-            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-                <div>
-                    <strong style="font-size:1.1em;">{icon} {PLATFORM_NAMES.get(r['platform'], r['platform'].upper())}</strong>
-                    &nbsp;·&nbsp; <code style="background:#e9ecef; padding:2px 8px; border-radius:4px;">@{r.get('username','—')}</code>
-                </div>
-                <div style="font-size:1.15em; font-weight:bold;">{status}</div>
-            </div>
-            <div style="color:#666; font-size:0.88em; margin-top:8px;">
-                📝 {r['details']} &nbsp;&nbsp;·&nbsp;&nbsp;
-                <a href="{r['link']}" target="_blank" style="color:#667eea;">🔗 زيارة</a>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    # CSV download
+    st.markdown("---")
+    import csv
+    import io
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    active = sum(1 for r in results if "✅" in r["status"])
-    suspended = sum(1 for r in results if "🚫" in r["status"])
-    not_found = sum(1 for r in results if "❌" in r["status"])
-    errors = sum(1 for r in results if "⚠️" in r["status"])
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=["platform", "username", "status", "confidence", "link", "reason"])
+    writer.writeheader()
+    writer.writerows(results)
+    csv_bytes = buf.getvalue().encode("utf-8")
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("✅ نشط", active)
-    c2.metric("🚫 موقوف", suspended)
-    c3.metric("❌ غير موجود", not_found)
-    c4.metric("⚠️ خطأ", errors)
-    c5.metric("📊 المجموع", len(results))
-
-elif check_button:
-    st.warning("⚠️ أدخل رابط واحد على الأقل.")
+    st.download_button(
+        "⬇️ Download CSV",
+        data=csv_bytes,
+        file_name="tiktok_status_results.csv",
+        mime="text/csv",
+        use_container_width=True
+    )
 
 st.markdown("---")
-col1, col2 = st.columns(2)
-with col1:
-    st.markdown("""
-    ### 🎯 دليل النتائج
-    | الحالة | المعنى |
-    |--------|--------|
-    | ✅ **نشط** | الحساب شغال |
-    | ✅ **نشط — غالباً** | موجود لكن محتاج متصفح للتأكيد |
-    | 🚫 **موقوف/محظور** | معلّق أو محظور |
-    | ❌ **غير موجود** | محذوف أو رابط غلط |
-    | ⚠️ **تعذر الاتصال** | مشكلة شبكة |
-    """)
-with col2:
-    st.markdown("""
-    ### 📌 طرق الفحص
-    | المنصة | الطريقة |
-    |--------|---------|
-    | 🐦 Twitter | HTTP + Pattern Matching |
-    | 📘 Facebook | **Graph API** + Mobile + HTTP |
-    | 📸 Instagram | HTTP + Mobile Fallback |
-    | 🎵 TikTok | **oEmbed API** + HTTP |
-    | 📺 YouTube | **oEmbed API** |
-    """)
-
-st.caption("🔧 Streamlit + httpx · Free APIs · مجاني 100% · لا يحتاج API Keys")
+st.caption("🧰 Streamlit + httpx · TikTok oEmbed + fallback HTML signals · Free (no API keys)")
