@@ -4,8 +4,9 @@ import re
 import time
 import random
 from urllib.parse import urlparse, urlunparse
-import csv
-import io
+import pandas as pd
+import base64
+from pathlib import Path
 
 # =========================
 # Page
@@ -13,212 +14,137 @@ import io
 st.set_page_config(page_title="TikTok Status Checker", page_icon="🎵", layout="wide")
 
 # =========================
-# THEME (you can tweak)
+# Background image helper
+# Put bg.png next to app.py
 # =========================
-PRIMARY_BLUE = "#3F6FB6"     # main blue (boxes)
-PRIMARY_BLUE_DARK = "#2F5EA4"
-BG = "#F4F6FB"               # page background
-TEXT = "#0F172A"
-CARD_BG = "#FFFFFF"
-BORDER = "rgba(15, 23, 42, 0.12)"
+def set_bg_image(image_path: str = "bg.png"):
+    p = Path(image_path)
+    if not p.exists():
+        # If not found, just set dark bg
+        st.markdown("""
+        <style>
+          .stApp { background: radial-gradient(circle at 20% 10%, #111827 0%, #0b1220 55%, #060b14 100%); }
+        </style>
+        """, unsafe_allow_html=True)
+        return
+
+    b64 = base64.b64encode(p.read_bytes()).decode("utf-8")
+    st.markdown(f"""
+    <style>
+      .stApp {{
+        background:
+          linear-gradient(rgba(6,11,20,.92), rgba(6,11,20,.92)),
+          url("data:image/png;base64,{b64}");
+        background-size: cover;
+        background-repeat: no-repeat;
+        background-attachment: fixed;
+        background-position: center;
+      }}
+    </style>
+    """, unsafe_allow_html=True)
+
+set_bg_image("bg.png")
 
 # =========================
-# CSS
+# CSS (dark theme + clean sections)
 # =========================
-st.markdown(f"""
+st.markdown("""
 <style>
-/* page */
-.stApp {{
-  background: {BG};
-  color: {TEXT};
-}}
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
 
-/* hide default menu/footer */
-#MainMenu {{visibility: hidden;}}
-footer {{visibility: hidden;}}
-header {{visibility: hidden;}}
+.block-container {padding-top: 22px; max-width: 980px;}
 
-/* make content wider */
-.block-container {{
-  padding-top: 22px;
-  max-width: 1100px;
-}}
-
-/* top header */
-.hero {{
-  background: #0B0F19;
-  border-radius: 16px;
-  padding: 26px 20px;
+.hero{
+  background: rgba(10, 16, 30, .82);
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: 18px;
+  padding: 22px 18px;
   text-align: center;
-  box-shadow: 0 10px 30px rgba(0,0,0,.18);
-}}
-.hero .title {{
-  font-size: 28px;
-  font-weight: 800;
-  color: #fff;
-  margin: 0;
-  line-height: 1.2;
-}}
-.hero .subtitle {{
-  margin-top: 8px;
-  color: rgba(255,255,255,.75);
-  font-size: 15px;
-}}
-.logo-box {{
-  width: 56px;
-  height: 56px;
-  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.35);
+  backdrop-filter: blur(8px);
+}
+.hero .logo{
+  width: 52px; height: 52px; border-radius: 14px;
+  display:flex; align-items:center; justify-content:center;
+  margin: 0 auto 10px auto;
   background: rgba(255,255,255,.08);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 12px;
   border: 1px solid rgba(255,255,255,.12);
-}}
-.logo-box span {{
   font-size: 26px;
-}}
-
-/* blue section wrappers */
-.section-blue {{
-  background: {PRIMARY_BLUE};
-  border-radius: 16px;
-  padding: 18px;
-  margin-top: 20px;
-  box-shadow: 0 14px 30px rgba(63,111,182,.25);
-}}
-.section-blue .section-title {{
+}
+.hero h1{
+  margin: 0;
   color: #fff;
-  font-weight: 800;
-  font-size: 20px;
-  text-align: center;
-  margin: 0 0 14px 0;
-}}
-.section-blue .hint {{
-  color: rgba(255,255,255,.85);
-  text-align: center;
+  font-size: 26px;
+  font-weight: 900;
+}
+.hero p{
+  margin: 8px 0 0 0;
+  color: rgba(255,255,255,.75);
   font-size: 13px;
-  margin-top: -8px;
-  margin-bottom: 12px;
-}}
+}
 
-/* input card inside blue */
-.inner-card {{
-  background: rgba(255,255,255,.15);
-  border: 1px solid rgba(255,255,255,.25);
-  border-radius: 14px;
+.section{
+  margin-top: 16px;
+  background: rgba(10, 16, 30, .72);
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: 18px;
   padding: 16px;
-}}
+  box-shadow: 0 10px 30px rgba(0,0,0,.30);
+  backdrop-filter: blur(8px);
+}
 
-/* style text area a bit */
-textarea {{
-  border-radius: 12px !important;
-  border: 1px solid rgba(255,255,255,.35) !important;
-}}
-
-/* button styling */
-.stButton > button {{
+.stButton > button{
   border-radius: 12px !important;
   padding: 10px 14px !important;
   border: 0 !important;
-  font-weight: 700 !important;
-}}
-.primary-btn > button {{
-  background: #0B0F19 !important;
+  font-weight: 800 !important;
+}
+.primary-btn > button{
+  background: #2563eb !important;
   color: #fff !important;
-}}
-.ghost-btn > button {{
-  background: rgba(255,255,255,.18) !important;
+}
+.secondary-btn > button{
+  background: rgba(255,255,255,.10) !important;
   color: #fff !important;
-  border: 1px solid rgba(255,255,255,.25) !important;
-}}
-.primary-btn > button:hover {{
-  background: #111827 !important;
-}}
-.ghost-btn > button:hover {{
-  background: rgba(255,255,255,.24) !important;
-}}
+  border: 1px solid rgba(255,255,255,.18) !important;
+}
 
-/* results area */
-.results-wrap {{
-  background: {PRIMARY_BLUE};
-  border-radius: 16px;
-  padding: 18px;
-  margin-top: 20px;
-  box-shadow: 0 14px 30px rgba(63,111,182,.25);
-}}
-.results-wrap .section-title {{
-  color: #fff;
-  font-weight: 800;
-  font-size: 20px;
-  text-align: center;
-  margin: 0 0 14px 0;
-}}
+.small-note{
+  color: rgba(255,255,255,.70);
+  font-size: 12px;
+}
 
-/* result card */
-.r-card {{
-  background: {CARD_BG};
-  border: 1px solid {BORDER};
+.metrics-wrap{
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.10);
   border-radius: 14px;
-  padding: 14px 14px;
-  margin: 10px 0;
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-}}
-.r-left {{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  flex-wrap: wrap;
-}}
-.badge {{
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 800;
-  border: 1px solid {BORDER};
-}}
-.badge-ok {{ background: rgba(34,197,94,.12); color: #166534; border-color: rgba(34,197,94,.28); }}
-.badge-bad {{ background: rgba(239,68,68,.10); color: #7f1d1d; border-color: rgba(239,68,68,.25); }}
-.badge-warn {{ background: rgba(245,158,11,.14); color: #7c2d12; border-color: rgba(245,158,11,.28); }}
-.badge-unk {{ background: rgba(100,116,139,.14); color: #0f172a; border-color: rgba(100,116,139,.25); }}
+  padding: 10px 12px;
+}
 
-.conf {{
-  font-size: 12px;
-  font-weight: 800;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(15,23,42,.06);
-  border: 1px solid {BORDER};
-}}
-
-.small {{
-  color: rgba(15, 23, 42, .75);
-  font-size: 12px;
-}}
-
-a {{
-  text-decoration: none;
-}}
+.dataframe-wrap{
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: 14px;
+  padding: 12px;
+}
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# Header UI (same "system" as your mock)
+# Header
 # =========================
 st.markdown("""
 <div class="hero">
-  <div class="logo-box"><span>🎵</span></div>
-  <h1 class="title">TikTok</h1>
-  <div class="subtitle">هنا مكتوب وتحط اللوجو — فحص حالة الحساب من اللينكات</div>
+  <div class="logo">🎵</div>
+  <h1>TikTok</h1>
+  <p>افحص حالة الحسابات من الروابط — بدون API Keys</p>
 </div>
 """, unsafe_allow_html=True)
 
 # =========================
-# TikTok checker logic (Free, no keys)
+# TikTok checker (free)
 # =========================
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -250,9 +176,6 @@ def normalize_url(url: str) -> str:
     path = p.path.rstrip("/")
     return urlunparse((scheme, netloc, path, "", "", ""))
 
-def is_tiktok(url: str) -> bool:
-    return "tiktok.com" in url.lower()
-
 def extract_username(url: str) -> str | None:
     url = normalize_url(url)
     m = re.search(r"tiktok\.com/@([^/?#]+)", url, flags=re.IGNORECASE)
@@ -273,32 +196,32 @@ def check_tiktok(username: str) -> dict:
     clean = username.lstrip("@").strip()
     profile_url = f"https://www.tiktok.com/@{clean}"
 
-    # 1) oEmbed
+    # 1) oEmbed (strong signal)
     oembed_url = f"https://www.tiktok.com/oembed?url={profile_url}"
     r = safe_get(oembed_url, timeout=12)
 
     if r is None:
-        return {"username": clean, "status": "⚠️ Error", "confidence": 65, "link": profile_url, "reason": "Connection error (oEmbed)"}
+        return {"Username": clean, "Status": "Error", "Confidence": 65, "Link": profile_url}
 
     if r.status_code == 200:
-        return {"username": clean, "status": "✅ Active", "confidence": 95, "link": profile_url, "reason": "Confirmed via oEmbed (200)"}
+        return {"Username": clean, "Status": "Active", "Confidence": 95, "Link": profile_url}
 
     if r.status_code == 404:
-        return {"username": clean, "status": "❌ Not Found", "confidence": 95, "link": profile_url, "reason": "oEmbed returned 404"}
+        return {"Username": clean, "Status": "Not Found", "Confidence": 95, "Link": profile_url}
 
     if r.status_code in (403, 429):
-        return {"username": clean, "status": "⚠️ Blocked", "confidence": 75, "link": profile_url, "reason": f"oEmbed HTTP {r.status_code}"}
+        return {"Username": clean, "Status": "Blocked", "Confidence": 75, "Link": profile_url}
 
     # 2) page fallback
     r2 = safe_get(profile_url, timeout=18)
     if r2 is None:
-        return {"username": clean, "status": "⚠️ Error", "confidence": 60, "link": profile_url, "reason": "Connection error (profile)"}
+        return {"Username": clean, "Status": "Error", "Confidence": 60, "Link": profile_url}
 
     text = (r2.text or "").lower()
     code = r2.status_code
 
     if code in (403, 429):
-        return {"username": clean, "status": "⚠️ Blocked", "confidence": 70, "link": profile_url, "reason": f"Profile HTTP {code}"}
+        return {"Username": clean, "Status": "Blocked", "Confidence": 70, "Link": profile_url}
 
     banned_keywords = [
         "this account was banned",
@@ -306,44 +229,46 @@ def check_tiktok(username: str) -> dict:
         "permanently banned",
         "violated our community guidelines",
     ]
+    not_found_signals = [
+        "couldn't find this account",
+        "couldn\u2019t find this account",
+        '"statuscode":10202',
+    ]
+
+    # IMPORTANT: prefer Not Found if its signals appear
+    if code == 404 or any(s in text for s in not_found_signals):
+        return {"Username": clean, "Status": "Not Found", "Confidence": 92, "Link": profile_url}
+
     if any(k in text for k in banned_keywords):
-        return {"username": clean, "status": "🚫 Banned", "confidence": 95, "link": profile_url, "reason": "Ban keywords detected"}
+        return {"Username": clean, "Status": "Banned", "Confidence": 92, "Link": profile_url}
 
-    if code == 404 or '"statuscode":10202' in text or "couldn't find this account" in text or "couldn\u2019t find this account" in text:
-        return {"username": clean, "status": "❌ Not Found", "confidence": 92, "link": profile_url, "reason": "Not-found signals detected"}
-
-    strong_signals = [f"@{clean.lower()}", '"uniqueid"', 'property="og:title"', 'property="og:description"']
+    strong_signals = [f"@{clean.lower()}", '"uniqueid"', 'property="og:title"']
     if code == 200 and any(s in text for s in strong_signals):
-        return {"username": clean, "status": "✅ Likely Active", "confidence": 85, "link": profile_url, "reason": "Profile signals detected"}
+        return {"Username": clean, "Status": "Active", "Confidence": 85, "Link": profile_url}
 
     if code == 200:
-        return {"username": clean, "status": "❓ Unknown", "confidence": 70, "link": profile_url, "reason": "Loaded but weak signals (possible wall/AB test)"}
+        return {"Username": clean, "Status": "Unknown", "Confidence": 70, "Link": profile_url}
 
-    return {"username": clean, "status": "❓ Unknown", "confidence": 65, "link": profile_url, "reason": f"Unhandled HTTP {code}"}
+    return {"Username": clean, "Status": "Unknown", "Confidence": 65, "Link": profile_url}
 
 # =========================
-# Middle blue input box (like your mock)
+# Input section (NO extra text lines)
 # =========================
-st.markdown("""
-<div class="section-blue">
-  <div class="section-title">هنا مكان اختبار اللينكات</div>
-  <div class="hint">اكتب كل لينك TikTok في سطر لوحده</div>
-  <div class="inner-card">
-""", unsafe_allow_html=True)
+st.markdown('<div class="section">', unsafe_allow_html=True)
 
 urls_input = st.text_area(
     label="",
-    height=170,
-    placeholder="https://www.tiktok.com/@username\nhttps://tiktok.com/@username",
+    height=160,
+    placeholder="ضع روابط TikTok هنا (كل رابط في سطر)",
 )
 
-c1, c2, c3 = st.columns([1.1, 1.1, 2.2])
+c1, c2, c3 = st.columns([1.2, 1.2, 2.6])
 with c1:
     max_urls = st.number_input("Max links", min_value=1, max_value=200, value=25, step=1)
 with c2:
     delay = st.number_input("Delay (sec)", min_value=0.0, max_value=5.0, value=0.6, step=0.1)
 with c3:
-    st.caption("💡 لو ظهر Blocked كتير: زوّد الـ Delay أو قلّل عدد اللينكات في الدفعة.")
+    st.markdown('<div class="small-note">💡 لو ظهر Blocked كتير: زوّد الـ Delay أو قلّل عدد اللينكات.</div>', unsafe_allow_html=True)
 
 b1, b2 = st.columns(2)
 with b1:
@@ -351,118 +276,83 @@ with b1:
     run = st.button("🎵 فحص TikTok", use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 with b2:
-    st.markdown('<div class="ghost-btn">', unsafe_allow_html=True)
+    st.markdown('<div class="secondary-btn">', unsafe_allow_html=True)
     clear = st.button("🧹 مسح", use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-st.markdown("</div></div></div>", unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
 if clear:
     st.rerun()
 
 # =========================
-# Results big blue area (like your mock)
+# Results
 # =========================
-def badge_class(status: str) -> str:
-    if status.startswith("✅"):
-        return "badge-ok"
-    if status.startswith("🚫") or status.startswith("❌"):
-        return "badge-bad"
-    if status.startswith("⚠️"):
-        return "badge-warn"
-    return "badge-unk"
-
-def render_result(r: dict):
-    cls = badge_class(r["status"])
-    st.markdown(f"""
-    <div class="r-card">
-      <div class="r-left">
-        <div class="badge {cls}">{r["status"]}</div>
-        <div class="conf">{r["confidence"]}%</div>
-        <div><code>@{r["username"]}</code></div>
-      </div>
-      <div class="small">
-        {r["reason"]} &nbsp;·&nbsp;
-        <a href="{r["link"]}" target="_blank">Open</a>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
 if run:
     raw = [u.strip() for u in urls_input.splitlines() if u.strip()]
     if not raw:
-        st.warning("⚠️ حط لينك واحد على الأقل.")
+        st.warning("حط لينك واحد على الأقل.")
         st.stop()
 
-    cleaned = []
-    for u in raw:
-        u2 = normalize_url(u)
-        if is_tiktok(u2):
-            cleaned.append(u2)
+    links = [normalize_url(u) for u in raw]
+    # keep tiktok only (soft)
+    links = [u for u in links if "tiktok.com" in u.lower()]
 
-    if not cleaned:
-        st.error("❌ مفيش ولا لينك TikTok صحيح.")
+    if not links:
+        st.error("مفيش ولا لينك TikTok صحيح.")
         st.stop()
 
-    if len(cleaned) > int(max_urls):
-        cleaned = cleaned[: int(max_urls)]
+    if len(links) > int(max_urls):
+        links = links[: int(max_urls)]
 
     results = []
-    progress = st.progress(0)
-    status_line = st.empty()
+    prog = st.progress(0)
+    label = st.empty()
 
-    for i, url in enumerate(cleaned):
-        status_line.write(f"جارٍ الفحص: {i+1}/{len(cleaned)}")
+    for i, url in enumerate(links):
+        label.write(f"جارٍ الفحص: {i+1}/{len(links)}")
         username = extract_username(url)
         if not username:
-            results.append({"username": "—", "status": "❓ Invalid URL", "confidence": 90, "link": url, "reason": "Could not extract username"})
+            results.append({"Username": "—", "Status": "Invalid URL", "Confidence": 90, "Link": url})
         else:
             results.append(check_tiktok(username))
 
-        progress.progress((i + 1) / len(cleaned))
-        if i < len(cleaned) - 1 and delay > 0:
+        prog.progress((i + 1) / len(links))
+        if i < len(links) - 1 and delay > 0:
             time.sleep(float(delay))
 
-    progress.empty()
-    status_line.empty()
+    prog.empty()
+    label.empty()
 
-    active = sum(1 for r in results if r["status"].startswith("✅"))
-    banned = sum(1 for r in results if r["status"].startswith("🚫"))
-    not_found = sum(1 for r in results if r["status"].startswith("❌"))
-    blocked = sum(1 for r in results if r["status"].startswith("⚠️"))
-    unknown = len(results) - (active + banned + not_found + blocked)
+    df = pd.DataFrame(results)
 
-    st.markdown("""
-    <div class="results-wrap">
-      <div class="section-title">هنا النتائج تطلع</div>
-    </div>
-    """, unsafe_allow_html=True)
+    # counts
+    active = int((df["Status"] == "Active").sum())
+    banned = int((df["Status"] == "Banned").sum())
+    not_found = int((df["Status"] == "Not Found").sum())
+    blocked = int((df["Status"] == "Blocked").sum())
+    unknown = int((df["Status"] == "Unknown").sum())
+    total = len(df)
 
+    st.markdown('<div class="section">', unsafe_allow_html=True)
+    st.markdown('<div class="metrics-wrap">', unsafe_allow_html=True)
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric("✅ Active", active)
     m2.metric("🚫 Banned", banned)
     m3.metric("❌ Not Found", not_found)
     m4.metric("⚠️ Blocked", blocked)
     m5.metric("❓ Unknown", unknown)
-    m6.metric("📦 Total", len(results))
+    m6.metric("📦 Total", total)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    # results list inside the big blue section
-    st.markdown(f"""
-    <div class="results-wrap">
-      <div class="section-title">تفاصيل النتائج</div>
-    </div>
-    """, unsafe_allow_html=True)
+    # table: Username | Status | Link
+    st.markdown('<div class="dataframe-wrap">', unsafe_allow_html=True)
+    show_df = df[["Username", "Status", "Link"]].copy()
+    st.dataframe(show_df, use_container_width=True, hide_index=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    for r in results:
-        render_result(r)
-
-    # download csv
-    buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=["username", "status", "confidence", "link", "reason"])
-    writer.writeheader()
-    writer.writerows(results)
-    csv_bytes = buf.getvalue().encode("utf-8")
-
+    # CSV
+    csv_bytes = df.to_csv(index=False).encode("utf-8")
     st.download_button(
         "⬇️ Download CSV",
         data=csv_bytes,
@@ -470,5 +360,6 @@ if run:
         mime="text/csv",
         use_container_width=True
     )
+    st.markdown('</div>', unsafe_allow_html=True)
 
-st.caption("Streamlit + httpx · TikTok oEmbed + HTML fallback · مجاني بدون API Keys")
+st.caption("Streamlit + httpx · TikTok oEmbed + HTML fallback · Free (no API Keys)")
